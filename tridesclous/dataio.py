@@ -202,6 +202,8 @@ class DataIO:
         kargs = self.info['datasource_kargs']
         
         self.datasource = data_source_classes[self.info['datasource_type']](**kargs)
+        self.info['datasource_kargs'].pop('gui', None)  # Not json serializable.
+        self.datasource.load()
         
         self.total_channel = self.datasource.total_channel
         self.nb_segment = self.datasource.nb_segment

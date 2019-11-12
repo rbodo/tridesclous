@@ -1,4 +1,6 @@
 import os
+import subprocess
+
 import numpy as np
 import re
 from collections import OrderedDict
@@ -31,9 +33,188 @@ class DataSourceBase:
     
     def get_signals_chunk(self, seg_num=0, i_start=None, i_stop=None):
         raise NotImplementedError
-    
 
-    
+    def load(self):
+        pass
+
+
+def get_all_channel_data(stream):
+    num_channels, num_timesteps = stream.channel_data.shape
+    # Data type is fixed to float because ``stream.get_channel_in_range``
+    # returns traces in Volt. Otherwise, could use
+    # ``stream.channel_data.dtype``, which would be 'int32'.
+    dtype = 'float32'
+
+    id_map = {}
+    scales = []
+    offsets = []
+    sample_rates = []
+    for k in stream.channel_infos.keys():
+        info = stream.channel_infos[k]
+        id_map[info.channel_id] = info.row_index
+        scales.append(info.adc_step.magnitude)
+        offsets.append(info.get_field('ADZero'))
+        sample_rates.append(int(info.sampling_frequency.magnitude))
+
+    assert np.array_equiv(sample_rates, sample_rates[0]), \
+        "Recording contains different sample rates."
+
+    is_parallelizable = (np.array_equiv(scales, scales[0]) and
+                         np.array_equiv(offsets, offsets[0]))
+
+    if is_parallelizable:
+        channel_data_permuted = np.array(stream.channel_data)
+        channel_data = np.empty_like(channel_data_permuted)
+        channel_data[list(id_map.keys())] = \
+            channel_data_permuted[list(id_map.values())]
+        channel_data = np.transpose(channel_data)
+        channel_data = (channel_data - offsets[0]) * scales[0]
+    else:
+        import sys
+        channel_data = np.empty((num_timesteps, num_channels), dtype)
+        for i_channel in range(num_channels):
+            channel_data[:, i_channel] = stream.get_channel_in_range(
+                i_channel, 0, num_timesteps - 1)[0]
+            status = (i_channel + 1) / num_channels
+            sys.stdout.write('\r{:>7.2%}'.format(status))
+            sys.stdout.flush()
+        print('')
+
+    return channel_data, sample_rates[0]
+
+
+class H5DataSource(DataSourceBase):
+    """DataSource from h5 files."""
+
+    mode = 'multi-file'
+
+    def __init__(self, filenames, gui=None):
+        DataSourceBase.__init__(self)
+
+        self.log = print if gui is None else gui.log
+
+        self.filenames = [filenames] if isinstance(filenames, str) \
+            else filenames
+        for filename in self.filenames:
+            assert os.path.exists(filename), \
+                "File {} could not be found.".format(filename)
+
+        self.nb_segment = len(self.filenames)
+        self.array_sources = []
+        self.channel_names = None
+        self.bit_to_microVolt = 1  # Signal is already in uV.
+
+    def load(self):
+        from McsPy.McsData import RawData
+
+        sample_rates = []
+        dtypes = []
+        num_channels = []
+        channel_names = []
+        for filename in self.filenames:
+            self.log("Loading .h5 file: {}".format(filename))
+            data = RawData(filename)
+            assert len(data.recordings) == 1, \
+                "Can only handle a single recording per file."
+            stream = data.recordings[0].analog_streams[0]  # Todo: What if a file contains multiple recordings? And do we always discard the analog_stream[1] (analog data)?
+            traces, sample_rate = get_all_channel_data(stream)
+            self.array_sources.append(traces)
+            sample_rates.append(sample_rate)
+            dtypes.append(traces.dtype)
+            num_channels.append(traces.shape[1])
+            channel_names.append(['ch' + stream.channel_infos[i].label for i in
+                                  range(traces.shape[1])])
+
+        # Make sure that every file uses the same sample rate, dtype, etc.
+        assert np.array_equiv(sample_rates, sample_rates[0]), \
+            "Recording contains different sample rates."
+
+        assert np.array_equiv(dtypes, dtypes[0]), \
+            "Recording contains different dtypes."
+
+        assert np.array_equiv(num_channels, num_channels[0]), \
+            "Recording contains different number of channels."
+
+        assert np.array_equiv(channel_names, channel_names[0]), \
+            "Recording contains different channel names."
+
+        self.total_channel = num_channels[0]
+        self.sample_rate = sample_rates[0]
+        self.dtype = dtypes[0]
+        self.channel_names = channel_names[0]
+
+        self.log("Finished initializing DataSource.")
+
+    def get_segment_shape(self, seg_num):
+        return self.array_sources[seg_num].shape
+
+    def get_signals_chunk(self, seg_num=0, i_start=None, i_stop=None):
+        return self.array_sources[seg_num][i_start:i_stop, :]
+
+    def get_channel_names(self):
+        from McsPy.McsData import RawData
+
+        if self.channel_names is None:
+            channel_names = []
+            for filename in self.filenames:
+                data = RawData(filename)
+                stream = data.recordings[0].analog_streams[0]
+                channel_names.append(['ch' + stream.channel_infos[i].label for
+                                      i in range(len(stream.channel_infos))])
+            assert np.array_equiv(channel_names, channel_names[0]), \
+                "Recording contains different channel names."
+            self.channel_names = channel_names[0]
+
+        return self.channel_names
+
+
+class MsrdDataSource(H5DataSource):
+    """DataSource from MCS2100."""
+
+    def __init__(self, filenames, gui=None):
+
+        log = print if gui is None else gui.log
+
+        if isinstance(filenames, str):
+            filenames = [filenames]
+
+        filenames_h5 = []
+        for filename in filenames:
+            assert os.path.exists(filename), \
+                "File {} could not be found.".format(filename)
+            msg = "Converting file from .msrd to .h5: {}".format(filename)
+            log(msg)
+            basename = os.path.splitext(filename)[0]
+            filenames_h5.append(basename + '.h5')
+            subprocess.run(["MCDataConv", "-t", "hdf5", basename + '.msrs'])
+        log("Done converting.")
+
+        H5DataSource.__init__(self, filenames_h5, gui)
+
+
+class McdDataSource(H5DataSource):
+    """DataSource from MCS1060."""
+
+    def __init__(self, filenames, gui=None):
+
+        log = print if gui is None else gui.log
+
+        if isinstance(filenames, str):
+            filenames = [filenames]
+
+        filenames_h5 = []
+        for filename in filenames:
+            assert os.path.exists(filename), \
+                "File {} could not be found.".format(filename)
+            msg = "Converting file from .mcd to .h5: {}".format(filename)
+            log(msg)
+            filenames_h5.append(os.path.splitext(filename)[0] + '.h5')
+            subprocess.run(["MCDataConv", "-t", "hdf5", filename])
+        log("Done converting.")
+
+        H5DataSource.__init__(self, filenames_h5, gui)
+
+
 class InMemoryDataSource(DataSourceBase):
     """
     DataSource in memory numpy array.
@@ -267,7 +448,9 @@ for rawio_class in rawiolist:
     data_source_classes[name] = datasource_class
     #~ print(datasource_class, datasource_class.mode )
 
-
+data_source_classes['mcd'] = McdDataSource
+data_source_classes['msrd'] = MsrdDataSource
+data_source_classes['h5'] = H5DataSource
     
 #TODO implement KWIK and OpenEphys
 #https://open-ephys.atlassian.net/wiki/display/OEW/Data+format
