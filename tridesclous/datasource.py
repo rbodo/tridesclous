@@ -116,14 +116,19 @@ class H5DataSource(DataSourceBase):
             data = RawData(filename)
             assert len(data.recordings) == 1, \
                 "Can only handle a single recording per file."
-            stream = data.recordings[0].analog_streams[0]  # Todo: What if a file contains multiple recordings? And do we always discard the analog_stream[1] (analog data)?
-            traces, sample_rate = get_all_channel_data(stream)
+            trigger_data = data.recordings[0].analog_streams[1].channel_data[0]
+            dirname, basename = os.path.split(filename)
+            basename, _ = os.path.splitext(basename)
+            np.savez_compressed(os.path.join(dirname, basename + '_trigger'),
+                                trigger_data)
+            electrode_data = data.recordings[0].analog_streams[0]
+            traces, sample_rate = get_all_channel_data(electrode_data)
             self.array_sources.append(traces)
             sample_rates.append(sample_rate)
             dtypes.append(traces.dtype)
             num_channels.append(traces.shape[1])
-            channel_names.append(['ch' + stream.channel_infos[i].label for i in
-                                  range(traces.shape[1])])
+            channel_names.append(['ch' + electrode_data.channel_infos[i].label
+                                  for i in range(traces.shape[1])])
 
         # Make sure that every file uses the same sample rate, dtype, etc.
         assert np.array_equiv(sample_rates, sample_rates[0]), \

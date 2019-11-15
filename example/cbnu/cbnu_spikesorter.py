@@ -1,5 +1,7 @@
 import os
 import time
+import numpy as np
+import matplotlib.pyplot as plt
 import tkinter as tk
 import tkinter.ttk as ttk
 from tkinter import filedialog, messagebox
@@ -20,6 +22,7 @@ class ElectrodeSelector:
 
         self.wait_window = None
         self.wait_label = None
+        self.filepath = None
         self.dataio = None
         self.output_path = None
         self.electrode_window = None
@@ -120,6 +123,7 @@ class ElectrodeSelector:
         filepath = filedialog.askopenfilename(
             title="Select dataset.", initialdir='/',
             filetypes=[('MEA files', self.filetypes), ('all files', '*.*')])
+        self.filepath = filepath
 
         has_file = self.check_dataset_filepath(filepath)
 
@@ -311,11 +315,57 @@ class ElectrodeSelector:
         self.close_wait_window()
         self.quit()
 
+        dirname, basename = os.path.split(self.filepath)
+        basename, _ = os.path.splitext(basename)
+        trigger_path = os.path.join(dirname, basename + '_trigger.npz')
+        trigger_data = np.load(trigger_path)['arr_0']
+
+        spike_times = catalogueconstructor.all_peaks['index']
+        spike_labels = catalogueconstructor.all_peaks['cluster_label']
+        assigned_spikes = []
+        for cluster_label in catalogueconstructor.positive_cluster_labels:
+            assigned_spikes.append(spike_times[spike_labels == cluster_label])
+
+        plot_psth(assigned_spikes, trigger_data)
+
         # Visual check in CatalogueWindow
         gui = pg.mkQApp()
         win = tdc.CatalogueWindow(catalogueconstructor)
         win.show()
         gui.exec_()
+
+
+def plot_psth(spiketrains, triggers, num_bins=100):
+    """Plots PSTH of spiketrains."""
+
+    fig, ax = plt.subplots()
+    ax.set_xlabel('Time [s]')
+    ax.set_ylabel('Spikecount')
+
+    # Todo: Parametrize!
+    tick_to_second = 1e6 / 25000
+    trigger_times = np.flatnonzero(np.diff(triggers) >
+                                   np.abs(np.min(triggers))) * tick_to_second
+    num_triggers = len(trigger_times)
+    # binsize = np.max(spiketrains) // num_bins
+    for trains_cluster in spiketrains:
+        counts_channel = np.zeros(num_bins)
+        bin_edges = None
+        for t in range(num_triggers - 1):
+            counts, bin_edges = np.histogram(trains_cluster * tick_to_second,
+                                             bins=num_bins,
+                                             range=(trigger_times[t],
+                                                    trigger_times[t+1]))
+            counts_channel += counts
+        # No point in normalizing here because we've only counted some subset
+        # of all the spikes (the catalogue constructor does not assign all
+        # peaks to waveforms; this is the job of the peeler).
+        # counts_channel //= (binsize * num_triggers)
+        bin_edges -= bin_edges[0]  # Shift to zero.
+        bin_edges /= 1e6  # microseconds to seconds.
+        ax.bar(bin_edges[:-1], counts_channel, alpha=0.7,
+               width=bin_edges[1]-bin_edges[0])
+    plt.show()
 
 
 def main():
