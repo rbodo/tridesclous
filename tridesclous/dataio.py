@@ -238,7 +238,7 @@ class DataIO:
         The probe file is copied inside the working dir.
         
         """
-        self._rm_old_probe_file()
+        # self._rm_old_probe_file()
         probe_filename = os.path.join(self.dirname, os.path.basename(src_probe_filename))
         try:
             shutil.copyfile(src_probe_filename, probe_filename)

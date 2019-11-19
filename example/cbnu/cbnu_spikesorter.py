@@ -1,5 +1,7 @@
 import os
 import time
+from functools import partial
+
 import numpy as np
 import matplotlib.pyplot as plt
 import tkinter as tk
@@ -11,6 +13,7 @@ import pyqtgraph as pg
 import tridesclous as tdc
 
 
+# noinspection PyUnresolvedReferences
 class ElectrodeSelector:
 
     def __init__(self, root):
@@ -21,21 +24,16 @@ class ElectrodeSelector:
         self.filetypes = ['.mcd', '.msrd', '.h5']
 
         self.wait_window = None
-        self.wait_label = None
         self.filepath = None
         self.dataio = None
         self.output_path = None
-        self.electrode_window = None
-        self.electrodes = []
         self.geometry = None
         self.statusbar = None
 
-        self.main_container = ttk.Frame(root)
+        self.main_container = tk.Frame(root, bg=root['bg'])
         self.main_container.pack()
-        # self.top_level_menu()
         self.dataset_button()
-        self.electrode_selection_button()
-        self.processing_button()
+        self.electrode_selection_frame()
         self.status_widgets()
 
         # Set x and y coordinates for the Tk root window.
@@ -57,34 +55,15 @@ class ElectrodeSelector:
         """Widgets for loading the dataset."""
 
         # Button for loading dataset.
-        ttk.Button(self.main_container,
-                   text="Load dataset",
-                   command=self.load_dataset).pack(fill='x',
-                                                   expand=True,
-                                                   side='left')
-
-    def electrode_selection_button(self):
-        """Widgets for selecting the electrodes."""
-
-        ttk.Button(self.main_container,
-                   text="Select electrodes",
-                   command=self.electrode_selection_window).pack(fill='x',
-                                                                 expand=True,
-                                                                 side='left')
-
-    def processing_button(self):
-        """Widgets for processing data."""
-
-        # Button for loading dataset.
-        ttk.Button(self.main_container,
-                   text="Start processing",
-                   command=self.start_processing).pack(fill='x',
-                                                       expand=True,
-                                                       side='left')
+        dataset_frame = tk.Frame(self.main_container, bg=self.root['bg'])
+        dataset_frame.pack(fill='x', expand=True, side='top')
+        ttk.Button(dataset_frame, text="Load dataset",
+                   command=self.load_dataset).pack(
+            fill='x', expand=True, padx=[10, 10], pady=[10, 10])
 
     def status_widgets(self):
         from tkinter.scrolledtext import ScrolledText
-        self.statusbar = ScrolledText(height=6, wrap=tk.WORD)
+        self.statusbar = ScrolledText(height=6, width=64, wrap=tk.WORD)
         self.statusbar.insert('end', "TOOLTIP: Start by loading dataset.")
         self.statusbar.pack(fill='both', expand=True, side='bottom')
 
@@ -106,9 +85,11 @@ class ElectrodeSelector:
         self.wait_window.transient(self.root)
         self.wait_window.title("INFO")
         self.wait_window.lift()
-        self.wait_window.geometry(self.initial_position)
-        ttk.Label(self.wait_window,
-                  text="Working... Please wait.").pack()
+        self.wait_window.attributes('-alpha', 1)
+        self.wait_window.geometry('160x60' + self.initial_position)
+        ttk.Label(self.wait_window, background=self.wait_window.master['bg'],
+                  font=('Helvetica', 10), text="Working... Please wait.").pack(
+            fill='both', expand=True, side='top')
 
         # Disable close button.
         self.wait_window.protocol('WM_DELETE_WINDOW', lambda: None)
@@ -143,8 +124,7 @@ class ElectrodeSelector:
                                     filenames=[filepath], gui=self)
         self.close_wait_window()
 
-        self.log("TOOLTIP: Optionally, toggle electrodes to use, or start "
-                 "processing all.")
+        self.log("TOOLTIP: Click on channel number to start spike sorter.")
 
     def check_dataset_filepath(self, path):
 
@@ -171,9 +151,136 @@ class ElectrodeSelector:
 
         return True
 
+    def electrode_selection_frame(self):
+        """Window for electrode selection."""
+
+        electrode_window = tk.Frame(self.main_container, bg=self.root['bg'])
+        electrode_window.pack(expand=True, side='bottom',
+                              padx=[10, 10], pady=[0, 10])
+
+        self.geometry = []
+        interelectrode_distance = 200  # micrometer
+        num_rows = 8
+        num_columns = 8
+        to_skip = {(0, 0),
+                   (0, num_columns - 1),
+                   (num_rows - 1, 0),
+                   (num_rows - 1, num_columns - 1)}
+
+        for c in range(num_columns):
+            for r in range(num_rows):
+                if (r, c) in to_skip:
+                    continue
+
+                self.geometry.append((r * interelectrode_distance,
+                                      c * interelectrode_distance))
+
+                label = "{}{}".format(c + 1, r + 1)
+                command = partial(self.run_spikesorter_on_channel,
+                                  channel=len(self.geometry))
+                tk.Button(electrode_window, text=label, height=1, width=2,
+                          command=command, bg='LightSteelBlue2').grid(
+                    row=r, column=c, padx=2, pady=2)
+
+    def run_spikesorter_on_channel(self, channel):
+
+        if self.dataio is None:
+            msg = "Load dataset before running spike sorter."
+            messagebox.showerror("Error", msg)
+            return
+        elif not hasattr(self.dataio, 'nb_segment'):
+            # This handles the case where the user clicks on an electrode while
+            # the dataset is loading.
+            return
+
+        channel_groups = {channel: {'channels': [channel], 'geometry':
+                                    {channel: self.geometry[channel]}}}
+        path_probe = os.path.join(self.output_path, 'electrode_selection.prb')
+        with open(path_probe, 'w') as f:
+            f.write("channel_groups = {}".format(channel_groups))
+
+        self.dataio.set_probe_file(path_probe)
+
+        self.run_spikesorter()
+
+    def run_spikesorter(self):
+        # Parameters
+        highpass_frequency = 100
+        lowpass_frequency = 5000
+        relative_threshold = 4
+        duration = 100
+        waveform_left_ms = -2
+        waveform_right_ms = 3
+        feature_extractor = 'pca_by_channel'
+        n_components_by_channel = 4
+        clustering_method = 'gmm'
+        n_clusters = 3
+
+        self.show_wait_window()
+        self.log("Running spike sorter; please wait for GUI to open.")
+
+        # CatalogueConstructor
+        catalogueconstructor = tdc.CatalogueConstructor(self.dataio)
+
+        if 'clusters' not in catalogueconstructor.arrays.keys():
+            catalogueconstructor.set_preprocessor_params(
+                highpass_freq=highpass_frequency,
+                lowpass_freq=lowpass_frequency,
+                relative_threshold=relative_threshold)
+
+            # Median and MAD per channel
+            catalogueconstructor.estimate_signals_noise()
+
+            # Signal preprocessing and peak detection
+            catalogueconstructor.run_signalprocessor(duration=duration)
+
+            # Extract a few waveforms
+            catalogueconstructor.extract_some_waveforms(
+                wf_left_ms=waveform_left_ms, wf_right_ms=waveform_right_ms)
+
+            # Remove outlier spikes
+            catalogueconstructor.clean_waveforms()
+
+            # Feature extraction
+            catalogueconstructor.extract_some_features(
+                method=feature_extractor,
+                n_components_by_channel=n_components_by_channel)
+
+            # Clustering
+            catalogueconstructor.find_clusters(method=clustering_method,
+                                               n_clusters=n_clusters)
+
+        self.close_wait_window()
+
+        # Visual check in CatalogueWindow
+        gui = pg.mkQApp()
+        win = tdc.CatalogueWindow(catalogueconstructor, filepath=self.filepath)
+        win.show()
+        gui.exec_()
+
+    def electrode_selection_button(self):
+        """Widgets for selecting the electrodes."""
+
+        ttk.Button(self.main_container,
+                   text="Select electrodes",
+                   command=self.electrode_selection_window).pack(fill='x',
+                                                                 expand=True,
+                                                                 side='left')
+
+    def processing_button(self):
+        """Widgets for processing data."""
+
+        # Button for loading dataset.
+        ttk.Button(self.main_container,
+                   text="Start processing",
+                   command=self.start_processing).pack(fill='x',
+                                                       expand=True,
+                                                       side='left')
+
     def electrode_selection_window(self):
         """Popup for electrode selection."""
 
+        # noinspection PyAttributeOutsideInit
         self.electrode_window = tk.Toplevel()
         self.electrode_window.transient(self.root)
         self.electrode_window.title("Select electrodes to process.")
@@ -254,7 +361,7 @@ class ElectrodeSelector:
 
     def start_processing(self):
         if self.dataio is None:
-            msg = "Load dataset before starting spike sorter."
+            msg = "Load dataset before running spike sorter."
             messagebox.showerror('Error', msg)
             return
 
@@ -264,112 +371,10 @@ class ElectrodeSelector:
             self.electrode_selection_window()
             self.apply_electrode_selection()
 
-        self.run_tridesclous()
-
-    def run_tridesclous(self):
-        # Parameters
-        highpass_frequency = 100
-        lowpass_frequency = 5000
-        relative_threshold = 4
-        duration = 100
-        waveform_left_ms = -2
-        waveform_right_ms = 3
-        feature_extractor = 'pca_by_channel'
-        n_components_by_channel = 4
-        clustering_method = 'gmm'
-        n_clusters = 3
-
-        self.show_wait_window()
-        self.log("Running spike sorter.\n"
-                 "The GUI (tridesclous) will open shortly.")
-
-        # CatalogueConstructor
-        catalogueconstructor = tdc.CatalogueConstructor(self.dataio)
-
-        catalogueconstructor.set_preprocessor_params(
-            highpass_freq=highpass_frequency, lowpass_freq=lowpass_frequency,
-            relative_threshold=relative_threshold)
-
-        # Median and MAD per channel
-        catalogueconstructor.estimate_signals_noise()
-
-        # Signal preprocessing and peak detection
-        catalogueconstructor.run_signalprocessor(duration=duration)
-
-        # Extract a few waveforms
-        catalogueconstructor.extract_some_waveforms(
-            wf_left_ms=waveform_left_ms, wf_right_ms=waveform_right_ms)
-
-        # Remove outlier spikes
-        catalogueconstructor.clean_waveforms()
-
-        # Feature extraction
-        catalogueconstructor.extract_some_features(
-            method=feature_extractor,
-            n_components_by_channel=n_components_by_channel)
-
-        # Clustering
-        catalogueconstructor.find_clusters(method=clustering_method,
-                                           n_clusters=n_clusters)
-
-        self.close_wait_window()
-        self.quit()
-
-        dirname, basename = os.path.split(self.filepath)
-        basename, _ = os.path.splitext(basename)
-        trigger_path = os.path.join(dirname, basename + '_trigger.npz')
-        trigger_data = np.load(trigger_path)['arr_0']
-
-        spike_times = catalogueconstructor.all_peaks['index']
-        spike_labels = catalogueconstructor.all_peaks['cluster_label']
-        assigned_spikes = []
-        for cluster_label in catalogueconstructor.positive_cluster_labels:
-            assigned_spikes.append(spike_times[spike_labels == cluster_label])
-
-        plot_psth(assigned_spikes, trigger_data)
-
-        # Visual check in CatalogueWindow
-        gui = pg.mkQApp()
-        win = tdc.CatalogueWindow(catalogueconstructor)
-        win.show()
-        gui.exec_()
-
-
-def plot_psth(spiketrains, triggers, num_bins=100):
-    """Plots PSTH of spiketrains."""
-
-    fig, ax = plt.subplots()
-    ax.set_xlabel('Time [s]')
-    ax.set_ylabel('Spikecount')
-
-    # Todo: Parametrize!
-    tick_to_second = 1e6 / 25000
-    trigger_times = np.flatnonzero(np.diff(triggers) >
-                                   np.abs(np.min(triggers))) * tick_to_second
-    num_triggers = len(trigger_times)
-    # binsize = np.max(spiketrains) // num_bins
-    for trains_cluster in spiketrains:
-        counts_channel = np.zeros(num_bins)
-        bin_edges = None
-        for t in range(num_triggers - 1):
-            counts, bin_edges = np.histogram(trains_cluster * tick_to_second,
-                                             bins=num_bins,
-                                             range=(trigger_times[t],
-                                                    trigger_times[t+1]))
-            counts_channel += counts
-        # No point in normalizing here because we've only counted some subset
-        # of all the spikes (the catalogue constructor does not assign all
-        # peaks to waveforms; this is the job of the peeler).
-        # counts_channel //= (binsize * num_triggers)
-        bin_edges -= bin_edges[0]  # Shift to zero.
-        bin_edges /= 1e6  # microseconds to seconds.
-        ax.bar(bin_edges[:-1], counts_channel, alpha=0.7,
-               width=bin_edges[1]-bin_edges[0])
-    plt.show()
+        self.run_spikesorter()
 
 
 def main():
-
     # Open window for data loading and electrode selection.
     tk_root = tk.Tk()
     tk_root.title("CBNU SpikeSorter")
