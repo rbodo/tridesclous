@@ -38,6 +38,23 @@ class DataSourceBase:
         pass
 
 
+def get_channel_names(stream, num_channels):
+    channel_names_of_file = -np.ones(num_channels, int)
+    ref_label = '15'
+    for info in stream.channel_infos.values():
+        channel_id = info.channel_id
+        label = stream.channel_infos[channel_id].label
+        if label == 'Ref':
+            all_labels = [info.label for info in stream.channel_infos.values()]
+            assert ref_label not in all_labels, \
+                "Reference electrode was assumed to be {}. But this label " \
+                "is already in use.".format(ref_label)
+            label = ref_label
+        channel_names_of_file[channel_id] = int(label)
+    assert np.all(channel_names_of_file > 0)
+    return ['ch{}'.format(i) for i in channel_names_of_file]
+
+
 def get_all_channel_data(stream):
     num_channels, num_timesteps = stream.channel_data.shape
     # Data type is fixed to float because ``stream.get_channel_in_range``
@@ -126,9 +143,11 @@ class H5DataSource(DataSourceBase):
             self.array_sources.append(traces)
             sample_rates.append(sample_rate)
             dtypes.append(traces.dtype)
-            num_channels.append(traces.shape[1])
-            channel_names.append(['ch' + electrode_data.channel_infos[i].label
-                                  for i in range(traces.shape[1])])
+            num_channels_of_file = traces.shape[1]
+            num_channels.append(num_channels_of_file)
+            channel_names_of_file = get_channel_names(electrode_data,
+                                                      num_channels_of_file)
+            channel_names.append(channel_names_of_file)
 
         # Make sure that every file uses the same sample rate, dtype, etc.
         assert np.array_equiv(sample_rates, sample_rates[0]), \
@@ -164,8 +183,8 @@ class H5DataSource(DataSourceBase):
             for filename in self.filenames:
                 data = RawData(filename)
                 stream = data.recordings[0].analog_streams[0]
-                channel_names.append(['ch' + stream.channel_infos[i].label for
-                                      i in range(len(stream.channel_infos))])
+                channel_names.append(get_channel_names(
+                    stream, len(stream.channel_infos)))
             assert np.array_equiv(channel_names, channel_names[0]), \
                 "Recording contains different channel names."
             self.channel_names = channel_names[0]

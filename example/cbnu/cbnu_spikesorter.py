@@ -2,8 +2,6 @@ import os
 import time
 from functools import partial
 
-import numpy as np
-import matplotlib.pyplot as plt
 import tkinter as tk
 import tkinter.ttk as ttk
 from tkinter import filedialog, messagebox
@@ -172,18 +170,18 @@ class ElectrodeSelector:
                 if (r, c) in to_skip:
                     continue
 
+                channel_idx = len(self.geometry)
                 self.geometry.append((r * interelectrode_distance,
                                       c * interelectrode_distance))
 
                 label = "{}{}".format(c + 1, r + 1)
                 command = partial(self.run_spikesorter_on_channel,
-                                  channel=len(self.geometry))
+                                  channel_rel=channel_idx, label=label)
                 tk.Button(electrode_window, text=label, height=1, width=2,
                           command=command, bg='LightSteelBlue2').grid(
                     row=r, column=c, padx=2, pady=2)
 
-    def run_spikesorter_on_channel(self, channel):
-
+    def run_spikesorter_on_channel(self, channel_rel, label):
         if self.dataio is None:
             msg = "Load dataset before running spike sorter."
             messagebox.showerror("Error", msg)
@@ -193,8 +191,14 @@ class ElectrodeSelector:
             # the dataset is loading.
             return
 
-        channel_groups = {channel: {'channels': [channel], 'geometry':
-                                    {channel: self.geometry[channel]}}}
+        label = 'ch' + label
+
+        # Get absolute row index of data array.
+        channel_abs = self.dataio.datasource.channel_names.index(label)
+
+        channel_groups = {label: {
+            'channels': [channel_abs],
+            'geometry': {channel_abs: self.geometry[channel_rel]}}}
         path_probe = os.path.join(self.output_path, 'electrode_selection.prb')
         with open(path_probe, 'w') as f:
             f.write("channel_groups = {}".format(channel_groups))
