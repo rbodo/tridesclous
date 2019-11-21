@@ -1,9 +1,9 @@
-import os
-
 from .myqt import QT
 import pyqtgraph as pg
 from .base import WidgetBase
 import numpy as np
+
+from example.cbnu.cbnu_spikesorter import get_spiketrains, get_trigger_times
 
 
 class PSTH(WidgetBase):
@@ -19,25 +19,14 @@ class PSTH(WidgetBase):
 
         self.initialize_plot(filepath)
 
-    def initialize_plot(self, filepath):
-        dirname, basename = os.path.split(filepath)
-        basename, _ = os.path.splitext(basename)
-        trigger_path = os.path.join(dirname, basename + '_trigger.npz')
-        triggers = np.load(trigger_path)['arr_0']
+    def initialize_plot(self, filepath, num_bins=100):
 
-        spike_times = self.catalogueconstructor.all_peaks['index']
-        spike_labels = self.catalogueconstructor.all_peaks['cluster_label']
-        spiketrains = {}
-        for cluster_label in self.catalogueconstructor.positive_cluster_labels:
-            spiketrains[cluster_label] = spike_times[spike_labels ==
-                                                     cluster_label]
+        us_per_tick = int(1e6 / self.catalogueconstructor.dataio.sample_rate)
 
-        # Todo: Parametrize!
-        num_bins = 100
-        tick_to_second = 1e6 / 25000
-        trigger_times = np.flatnonzero(np.diff(triggers) >
-                                       np.abs(
-                                           np.min(triggers))) * tick_to_second
+        spiketrains = get_spiketrains(self.catalogueconstructor, us_per_tick)
+
+        trigger_times = get_trigger_times(filepath, us_per_tick)
+
         num_triggers = len(trigger_times)
 
         # Return if there are no triggers.
@@ -51,11 +40,9 @@ class PSTH(WidgetBase):
         for cluster_label, cluster_trains in spiketrains.items():
             cluster_counts = np.zeros(num_bins)
             for t in range(num_triggers - 1):
-                counts, bin_edges = np.histogram(
-                    cluster_trains * tick_to_second,
-                    bins=num_bins,
-                    range=(trigger_times[t],
-                           trigger_times[t + 1]))
+                counts, bin_edges = np.histogram(cluster_trains, bins=num_bins,
+                                                 range=(trigger_times[t],
+                                                        trigger_times[t + 1]))
                 cluster_counts += counts
             # No point in normalizing here because we've only counted some
             # subset of all the spikes (the catalogue constructor does not
