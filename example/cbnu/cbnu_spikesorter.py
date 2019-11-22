@@ -132,10 +132,9 @@ class ElectrodeSelector:
         self.wait_window.title("INFO")
         self.wait_window.lift()
         self.wait_window.attributes('-alpha', 1)
-        self.wait_window.geometry('160x60' + self.initial_position)
-        ttk.Label(self.wait_window, background=self.wait_window.master['bg'],
-                  font=('Helvetica', 10), text="Working... Please wait.").pack(
-            fill='both', expand=True, side='top')
+        self.wait_window.geometry('200x100' + self.initial_position)
+        ttk.Label(self.wait_window, text="Working on it... Please wait."
+                  ).place(relx=0.1, rely=0.3)
 
         # Disable close button.
         self.wait_window.protocol('WM_DELETE_WINDOW', lambda: None)
@@ -391,7 +390,7 @@ class ElectrodeSelector:
 
         spiketrains = get_spiketrains(catalogueconstructor, us_per_tick)
 
-        trigger_times = get_trigger_times(self.filepath, us_per_tick)
+        trigger_times = get_trigger_times(self.filepath)
 
         num_clusters = len(spiketrains)
 
@@ -475,7 +474,7 @@ class ElectrodeSelector:
 
         spiketrains = get_spiketrains(catalogueconstructor, us_per_tick)
 
-        trigger_times = get_trigger_times(self.filepath, us_per_tick)
+        trigger_times = get_trigger_times(self.filepath)
 
         num_triggers = len(trigger_times)
 
@@ -564,19 +563,11 @@ class ElectrodeSelector:
         fig.subplots_adjust(wspace=0, hspace=0)
 
 
-def get_trigger_times(filepath, us_per_tick=None):
+def get_trigger_times(filepath):
     dirname, basename = os.path.split(filepath)
     basename, _ = os.path.splitext(basename)
     trigger_path = os.path.join(dirname, basename + '_trigger.npz')
-    triggers = np.load(trigger_path)['arr_0']
-
-    trigger_times = np.flatnonzero(np.diff(triggers) >
-                                   np.abs(np.min(triggers)))
-
-    if us_per_tick is not None:
-        trigger_times *= us_per_tick
-
-    return trigger_times
+    return np.load(trigger_path)['arr_0']
 
 
 def get_spiketrains(catalogueconstructor, us_per_tick=None):

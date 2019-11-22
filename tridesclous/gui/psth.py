@@ -25,7 +25,7 @@ class PSTH(WidgetBase):
 
         spiketrains = get_spiketrains(self.catalogueconstructor, us_per_tick)
 
-        trigger_times = get_trigger_times(filepath, us_per_tick)
+        trigger_times = get_trigger_times(filepath)
 
         num_triggers = len(trigger_times)
 

@@ -38,8 +38,8 @@ class DataSourceBase:
         pass
 
 
-def get_channel_names(stream, num_channels):
-    channel_names_of_file = -np.ones(num_channels, int)
+def get_channel_names(stream):
+    channel_names_of_file = -np.ones(len(stream.channel_infos), int)
     ref_label = '15'
     for info in stream.channel_infos.values():
         channel_id = info.channel_id
@@ -133,21 +133,48 @@ class H5DataSource(DataSourceBase):
             data = RawData(filename)
             assert len(data.recordings) == 1, \
                 "Can only handle a single recording per file."
-            trigger_data = data.recordings[0].analog_streams[1].channel_data[0]
-            dirname, basename = os.path.split(filename)
-            basename, _ = os.path.splitext(basename)
-            np.savez_compressed(os.path.join(dirname, basename + '_trigger'),
-                                trigger_data)
-            electrode_data = data.recordings[0].analog_streams[0]
+
+            electrode_data = None
+            stream_id = None
+            analog_streams = data.recordings[0].analog_streams
+            for stream_id, stream in analog_streams.items():
+                if stream.data_subtype == 'Electrode':
+                    electrode_data = stream
+                    break
+            assert electrode_data is not None, "Electrode data not found."
+
             traces, sample_rate = get_all_channel_data(electrode_data)
             self.array_sources.append(traces)
             sample_rates.append(sample_rate)
             dtypes.append(traces.dtype)
-            num_channels_of_file = traces.shape[1]
-            num_channels.append(num_channels_of_file)
-            channel_names_of_file = get_channel_names(electrode_data,
-                                                      num_channels_of_file)
+            num_channels.append(traces.shape[1])
+            channel_names_of_file = get_channel_names(electrode_data)
             channel_names.append(channel_names_of_file)
+
+            trigger_times = None
+            event_streams = data.recordings[0].event_streams
+            if event_streams is not None:
+                if len(event_streams) > 1:
+                    print("WARNING: Multiple stimulus streams detected!")
+                for d in event_streams[0].event_entity.values():
+                    if d.info.label in {'STG 1 Single Pulse Start',
+                                        'Digital Event Detector Event'}:
+                        trigger_times = d.data[0]
+                        break
+            else:
+                analog_stream_id = (stream_id + 1) % 2
+                trigger_data = analog_streams[analog_stream_id].channel_data[0]
+                trigger_times = np.flatnonzero(np.diff(trigger_data) >
+                                               np.abs(np.min(trigger_data)))
+                us_per_tick = int(1e6 / sample_rate)
+                trigger_times *= us_per_tick
+
+            assert trigger_times is not None, "Trigger data not found."
+
+            dirname, basename = os.path.split(filename)
+            basename, _ = os.path.splitext(basename)
+            np.savez_compressed(os.path.join(
+                dirname, basename + '_trigger'), trigger_times)
 
         # Make sure that every file uses the same sample rate, dtype, etc.
         assert np.array_equiv(sample_rates, sample_rates[0]), \
@@ -183,8 +210,7 @@ class H5DataSource(DataSourceBase):
             for filename in self.filenames:
                 data = RawData(filename)
                 stream = data.recordings[0].analog_streams[0]
-                channel_names.append(get_channel_names(
-                    stream, len(stream.channel_infos)))
+                channel_names.append(get_channel_names(stream))
             assert np.array_equiv(channel_names, channel_names[0]), \
                 "Recording contains different channel names."
             self.channel_names = channel_names[0]
