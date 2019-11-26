@@ -8,6 +8,7 @@ from tkinter import filedialog, messagebox
 import matplotlib.pyplot as plt
 import numpy as np
 import pyqtgraph as pg
+from scipy.io import savemat
 
 import tridesclous as tdc
 
@@ -62,6 +63,7 @@ class ElectrodeSelector:
 
         self.dataset_button()
         self.toggle_electrode_selection()
+        self.save_button()
         for plot_type in self.plot_types:
             self.plot_button(plot_type)
         self.electrode_selection_frame()
@@ -98,6 +100,12 @@ class ElectrodeSelector:
         ttk.Button(self.button_frame_left, text="Toggle all",
                    command=toggle_all).pack(fill='both', expand=True,
                                             padx=[10, 10], pady=[10, 10])
+
+    def save_button(self):
+
+        ttk.Button(self.button_frame_left, text="Save spike times",
+                   command=self.save_spiketimes).pack(
+            fill='both', expand=True, padx=[10, 10], pady=[10, 10])
 
     def plot_button(self, plot_type):
         """Button for showing plots."""
@@ -316,6 +324,42 @@ class ElectrodeSelector:
             # the dataset is loading.
             return False
         return True
+
+    def save_spiketimes(self):
+        if not self.check_finished_loading():
+            return
+
+        path = os.path.join(self.output_path, 'spiketimes')
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        d = {i: j for i, j in enumerate(['A', 'B', 'C', 'D', 'E', 'F', 'G'])}
+
+        channel_idx = 0
+        for c in range(self.num_columns):
+            for r in range(self.num_rows):
+                if (r, c) in self.to_skip:
+                    continue
+
+                if not self.electrodes[channel_idx].get():
+                    channel_idx += 1
+                    continue
+
+                label = "{}{}".format(c + 1, r + 1)
+
+                catalogueconstructor = self.run_spikesorter_on_channel(
+                    channel_idx, label)
+
+                s_per_tick = 1 / self.dataio.sample_rate
+
+                spiketrains = get_spiketrains(catalogueconstructor, s_per_tick)
+
+                for cell_label, spike_times in spiketrains.items():
+                    filename = 'ch{}_{}.mat'.format(label, d[cell_label])
+                    filepath = os.path.join(path, filename)
+                    savemat(filepath, {'timestamps': spike_times})
+
+                channel_idx += 1
 
     def show_plots(self, plot_type):
 
@@ -573,12 +617,12 @@ def get_trigger_times(filepath):
     return np.load(trigger_path)['arr_0']
 
 
-def get_spiketrains(catalogueconstructor, us_per_tick=None):
+def get_spiketrains(catalogueconstructor, time_per_tick=None):
     spike_times = np.array(catalogueconstructor.all_peaks['index'])
     spike_labels = np.array(catalogueconstructor.all_peaks['cluster_label'])
 
-    if us_per_tick is not None:
-        spike_times *= us_per_tick
+    if time_per_tick is not None:
+        spike_times = spike_times * time_per_tick
 
     spiketrains = {}
     for cluster_label in catalogueconstructor.positive_cluster_labels:

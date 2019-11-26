@@ -314,6 +314,15 @@ class WaveformViewerBase(WidgetBase):
                 curve = pg.PlotCurveItem(xvect, mad, pen=color)
                 self.plot2.addItem(curve)        
 
+        for i in np.flatnonzero(self.controller.spike_selection):
+            cluster_idx = self.controller.spike_label[i]
+            color = self.controller.qcolors.get(cluster_idx,
+                                                QT.QColor('white'))
+            waveform = self.controller.some_waveforms[i, :, 0]
+            curve = pg.PlotCurveItem(xvect, waveform,
+                                     pen=pg.mkPen(color, width=1))
+            self.plot1.addItem(curve)
+
         if self.params['show_channel_num']:
             for i, (chan, name) in enumerate(self.controller.channel_indexes_and_names):
                 itemtxt = pg.TextItem('{}: {}'.format(i, name), anchor=(.5,.5), color='#FFFF00')
@@ -380,7 +389,17 @@ class WaveformViewerBase(WidgetBase):
             color = self.controller.qcolors.get(k, QT.QColor( 'white'))
             curve = pg.PlotCurveItem(self.xvect, wf, pen=pg.mkPen(color, width=2), connect='finite')
             self.plot1.addItem(curve)
-        
+
+        for i in np.flatnonzero(self.controller.spike_selection):
+            cluster_idx = self.controller.spike_label[i]
+            color = self.controller.qcolors.get(cluster_idx,
+                                                QT.QColor('white'))
+            waveform = self.controller.some_waveforms[i, :, 0]
+            waveform = waveform * self.factor_y * self.delta_y + ypos
+            curve = pg.PlotCurveItem(self.xvect, waveform,
+                                     pen=pg.mkPen(color, width=1))
+            self.plot1.addItem(curve)
+
         if self.params['show_channel_num']:
             chan_grp = self.controller.chan_grp
             channel_group = self.controller.dataio.channel_groups[chan_grp]            
