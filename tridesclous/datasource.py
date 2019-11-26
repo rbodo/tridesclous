@@ -169,7 +169,8 @@ class H5DataSource(DataSourceBase):
                 us_per_tick = int(1e6 / sample_rate)
                 trigger_times *= us_per_tick
 
-            assert trigger_times is not None, "Trigger data not found."
+            if trigger_times is None:
+                trigger_times = []
 
             dirname, basename = os.path.split(filename)
             basename, _ = os.path.splitext(basename)

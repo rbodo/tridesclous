@@ -125,9 +125,10 @@ class BaseTraceViewer(WidgetBase):
         tb.addWidget(self.select_button)
 
         # Trigger selection
-        self.trigger_selector = TriggerSeeker(self.triggers)
-        tb.addWidget(self.trigger_selector)
-        self.trigger_selector.time_changed.connect(self.seek)
+        if len(self.triggers):
+            trigger_selector = TriggerSeeker(self.triggers)
+            tb.addWidget(trigger_selector)
+            trigger_selector.time_changed.connect(self.seek)
 
         self.layout.addWidget(self.toolbar)
         
