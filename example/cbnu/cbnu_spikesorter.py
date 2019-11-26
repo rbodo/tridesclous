@@ -314,6 +314,15 @@ class ElectrodeSelector:
         win.show()
         gui.exec_()
 
+        # Remove any plots, because the user may have modified the clusters.
+        # The plots will be re-created on demand.
+        path_plots = os.path.join(self.output_path,
+                                  'channel_group_ch{}'.format(label), 'plots')
+        if os.path.exists(path_plots):
+            for filename in os.listdir(path_plots):
+                filepath = os.path.join(path_plots, filename)
+                os.remove(filepath)
+
     def check_finished_loading(self):
         if self.dataio is None:
             msg = "Load dataset before running spike sorter."

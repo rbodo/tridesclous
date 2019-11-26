@@ -17,17 +17,16 @@ class PSTH(WidgetBase):
         self.setLayout(self.layout)
         self.layout.addWidget(self.canvas)
 
-        self.initialize_plot(filepath)
+        self.trigger_times = get_trigger_times(filepath)
+        self.initialize_plot()
 
-    def initialize_plot(self, filepath, num_bins=100):
+    def initialize_plot(self, num_bins=100):
 
         us_per_tick = int(1e6 / self.catalogueconstructor.dataio.sample_rate)
 
         spiketrains = get_spiketrains(self.catalogueconstructor, us_per_tick)
 
-        trigger_times = get_trigger_times(filepath)
-
-        num_triggers = len(trigger_times)
+        num_triggers = len(self.trigger_times)
 
         # Return if there are no triggers.
         if num_triggers == 0:
@@ -40,9 +39,9 @@ class PSTH(WidgetBase):
         for cluster_label, cluster_trains in spiketrains.items():
             cluster_counts = np.zeros(num_bins)
             for t in range(num_triggers - 1):
-                counts, bin_edges = np.histogram(cluster_trains, bins=num_bins,
-                                                 range=(trigger_times[t],
-                                                        trigger_times[t + 1]))
+                counts, bin_edges = np.histogram(
+                    cluster_trains, bins=num_bins,
+                    range=(self.trigger_times[t], self.trigger_times[t + 1]))
                 cluster_counts += counts
             # No point in normalizing here because we've only counted some
             # subset of all the spikes (the catalogue constructor does not
@@ -76,20 +75,6 @@ class PSTH(WidgetBase):
                 plt.addItem(txt)
                 plt.setYRange(0, ylim)
 
-    def on_spike_selection_changed(self):
-        pass
-
-    def on_spike_label_changed(self):
-        pass
-
-    def on_colors_changed(self):
-        pass
-
-    def on_cluster_visibility_changed(self):
-        pass
-
-    def on_params_changed(self):
-        self.refresh()
-
     def refresh(self):
-        pass
+        self.canvas.clear()
+        self.initialize_plot()
