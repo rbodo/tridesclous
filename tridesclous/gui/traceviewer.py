@@ -5,10 +5,11 @@ import numpy as np
 import time
 
 from .base import WidgetBase
-from .tools import TimeSeeker
+from .tools import TimeSeeker, TriggerSeeker
 from ..tools import median_mad
 from ..dataio import _signal_types
 from ..peeler_tools import make_prediction_signals
+from example.cbnu.utils import get_trigger_times
 
 
 class MyViewBox(pg.ViewBox):
@@ -48,7 +49,9 @@ class BaseTraceViewer(WidgetBase):
     
     def __init__(self,controller=None, signal_type='initial', parent=None):
         WidgetBase.__init__(self, parent=parent, controller=controller)
-    
+
+        self.triggers = get_trigger_times(self.controller.cc.cbnu.filepath)
+
         self.dataio = controller.dataio
         self.signal_type = signal_type
         
@@ -120,8 +123,12 @@ class BaseTraceViewer(WidgetBase):
         tb.addWidget(but)
         self.select_button = QT.QPushButton('select', checkable = True)
         tb.addWidget(self.select_button)
-        
-        
+
+        # Trigger selection
+        self.trigger_selector = TriggerSeeker(self.triggers)
+        tb.addWidget(self.trigger_selector)
+        self.trigger_selector.time_changed.connect(self.seek)
+
         self.layout.addWidget(self.toolbar)
         
         self._create_other_toolbar()
@@ -172,12 +179,19 @@ class BaseTraceViewer(WidgetBase):
             self.threshold_lines.append(tc)
             self.plot.addItem(tc)
             tc.hide()
-        
+
         pen = pg.mkPen(color=(128,0,128, 120), width=3, style=QT.Qt.DashLine)
         self.selection_line = pg.InfiniteLine(pos = 0., angle=90, movable=False, pen = pen)
         self.plot.addItem(self.selection_line)
         self.selection_line.hide()
-        
+
+        pen = pg.mkPen(color=(128, 128, 0, 120), width=3, style=QT.Qt.DotLine)
+        for trigger in self.triggers:
+            trigger_line = pg.InfiniteLine(pos=trigger / 1e6, angle=90,
+                                           movable=False, pen=pen)
+            self.plot.addItem(trigger_line)
+            trigger_line.show()
+
         self._initialize_plot()
         
         self.gains = None

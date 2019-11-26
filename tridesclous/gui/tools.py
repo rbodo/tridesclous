@@ -68,6 +68,32 @@ class TimeSeeker(QT.QWidget) :
         if emit:
             self.time_changed.emit(float(self.t))
 
+
+class TriggerSeeker(QT.QWidget):
+
+    time_changed = QT.pyqtSignal(float)
+
+    def __init__(self, triggers, parent=None):
+        QT.QWidget.__init__(self, parent)
+
+        self.layout = QT.QHBoxLayout()
+        self.setLayout(self.layout)
+
+        step = np.median(np.diff(triggers))
+        self.slider = QT.QSlider(orientation=QT.Qt.Horizontal,
+                                 minimum=triggers[0], maximum=triggers[-1])
+        self.slider.setSingleStep(step)
+        self.slider.setPageStep(step)
+        self.slider.setTickInterval(step)
+        self.slider.setTickPosition(QT.QSlider.TicksBelow)
+        self.slider.valueChanged.connect(self.slider_changed)
+
+        self.layout.addWidget(self.slider)
+
+    def slider_changed(self, t):
+        self.time_changed.emit(t / 1e6)
+
+
 def get_dict_from_group_param(param, cascade = False):
     assert param.type() == 'group'
     d = {}

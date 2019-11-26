@@ -177,7 +177,7 @@ class CatalogueConstructor:
       * cluster_ratio_similarity (C, C) float32
 
     """.format(_dtype_peak, _dtype_cluster)
-    def __init__(self, dataio, chan_grp=None, name='catalogue_constructor'):
+    def __init__(self, dataio, chan_grp=None, name='catalogue_constructor', **kwargs):
         """
         Parameters
         ----------
@@ -225,7 +225,9 @@ class CatalogueConstructor:
         
         
         self.projector = None
-    
+
+        self.cbnu = kwargs.get('cbnu', None)
+
     def flush_info(self):
         """ Flush info (mainly parameters) to json files.
         """

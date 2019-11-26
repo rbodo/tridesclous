@@ -11,6 +11,7 @@ import pyqtgraph as pg
 from scipy.io import savemat
 
 import tridesclous as tdc
+from example.cbnu.utils import get_trigger_times, get_spiketrains
 
 
 class ElectrodeSelector:
@@ -252,7 +253,7 @@ class ElectrodeSelector:
 
         self.dataio.set_probe_file(path_probe)
 
-        return tdc.CatalogueConstructor(self.dataio)
+        return tdc.CatalogueConstructor(self.dataio, cbnu=self)
 
     def run_spikesorter(self, catalogueconstructor):
 
@@ -310,7 +311,7 @@ class ElectrodeSelector:
     def open_tridesclous_gui(self, channel_rel, label):
         cc = self.run_spikesorter_on_channel(channel_rel, label)
         gui = pg.mkQApp()
-        win = tdc.CatalogueWindow(cc, filepath=self.filepath)
+        win = tdc.CatalogueWindow(cc)
         win.show()
         gui.exec_()
 
@@ -617,27 +618,6 @@ class ElectrodeSelector:
                 axes[i, j].axis('off')
 
         fig.subplots_adjust(wspace=0, hspace=0)
-
-
-def get_trigger_times(filepath):
-    dirname, basename = os.path.split(filepath)
-    basename, _ = os.path.splitext(basename)
-    trigger_path = os.path.join(dirname, basename + '_trigger.npz')
-    return np.load(trigger_path)['arr_0']
-
-
-def get_spiketrains(catalogueconstructor, time_per_tick=None):
-    spike_times = np.array(catalogueconstructor.all_peaks['index'])
-    spike_labels = np.array(catalogueconstructor.all_peaks['cluster_label'])
-
-    if time_per_tick is not None:
-        spike_times = spike_times * time_per_tick
-
-    spiketrains = {}
-    for cluster_label in catalogueconstructor.positive_cluster_labels:
-        spiketrains[cluster_label] = spike_times[spike_labels == cluster_label]
-
-    return spiketrains
 
 
 def main():

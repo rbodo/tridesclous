@@ -29,7 +29,7 @@ import webbrowser
 
 class CatalogueWindow(QT.QMainWindow):
     new_catalogue = QT.pyqtSignal(int)
-    def __init__(self, catalogueconstructor, **kwargs):
+    def __init__(self, catalogueconstructor):
         QT.QMainWindow.__init__(self)
         
         self.setWindowIcon(QT.QIcon(':/main_icon.png'))
@@ -45,7 +45,7 @@ class CatalogueWindow(QT.QMainWindow):
         self.spikesimilarityview = SpikeSimilarityView(controller=self.controller)
         self.clustersimilarityview = ClusterSimilarityView(controller=self.controller)
         self.clusterratiosimilarityview = ClusterRatioSimilarityView(controller=self.controller)
-        self.psth = PSTH(controller=self.controller, filepath=kwargs['filepath'])
+        self.psth = PSTH(controller=self.controller)
         self.pairlist = PairList(controller=self.controller)
         self.silhouette = Silhouette(controller=self.controller)
         self.waveformhistviewer = WaveformHistViewer(controller=self.controller)

@@ -3,12 +3,12 @@ import pyqtgraph as pg
 from .base import WidgetBase
 import numpy as np
 
-from example.cbnu.cbnu_spikesorter import get_spiketrains, get_trigger_times
+from example.cbnu.utils import get_trigger_times, get_spiketrains
 
 
 class PSTH(WidgetBase):
 
-    def __init__(self, controller=None, parent=None, filepath=None):
+    def __init__(self, controller=None, parent=None):
         WidgetBase.__init__(self, parent, controller)
 
         self.catalogueconstructor = controller.cc
@@ -17,7 +17,8 @@ class PSTH(WidgetBase):
         self.setLayout(self.layout)
         self.layout.addWidget(self.canvas)
 
-        self.trigger_times = get_trigger_times(filepath)
+        self.trigger_times = get_trigger_times(
+            self.catalogueconstructor.cbnu.filepath)
         self.initialize_plot()
 
     def initialize_plot(self, num_bins=100):
