@@ -256,6 +256,9 @@ class ElectrodeSelector:
             highpass_freq=self.config['highpass_frequency'],
             lowpass_freq=self.config['lowpass_frequency'],
             relative_threshold=self.config['relative_threshold'])
+        # Using the GPU only makes sense when processing large workloads
+        # (many channels in parallel)
+        # signalpreprocessor_engine='opencl', peakdetector_engine='opencl')
 
         # Median and MAD per channel
         catalogueconstructor.estimate_signals_noise()
