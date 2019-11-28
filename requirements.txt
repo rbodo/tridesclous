@@ -13,3 +13,4 @@ pyqtgraph
 
 sphinx>=1.7.5
 
+McsPyDataTools
