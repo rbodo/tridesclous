@@ -1,4 +1,5 @@
 import os
+import shutil
 import time
 import tkinter as tk
 import tkinter.ttk as ttk
@@ -11,6 +12,9 @@ import pyqtgraph as pg
 from scipy.io import savemat
 
 import tridesclous as tdc
+from tridesclous.gui import gui_params
+from tridesclous.gui.tools import ParamDialog, MethodDialog, \
+    get_dict_from_group_param
 from example.cbnu.utils import get_trigger_times, get_spiketrains
 
 
@@ -31,18 +35,6 @@ class ElectrodeSelector:
                         (self.num_rows - 1, self.num_columns - 1)}
         self.to_disable = {(4, 0)}  # Reference electrode 15.
 
-        # Parameters
-        self.config = {'highpass_frequency': 100,
-                       'lowpass_frequency': 5000,
-                       'relative_threshold': 4,
-                       'duration': 100,
-                       'waveform_left_ms': -2,
-                       'waveform_right_ms': 3,
-                       'feature_extractor': 'pca_by_channel',
-                       'n_components_by_channel': 4,
-                       'clustering_method': 'gmm',
-                       'n_clusters': 3}
-
         self.plot_types = ['raster', 'waveform', 'psth', 'isi']
         self.plot_format = 'png'
 
@@ -53,6 +45,18 @@ class ElectrodeSelector:
         self.geometry = None
         self.electrodes = []
         self.statusbar = None
+        self.settings_version = 0
+
+        # This is a reference to the last used catalogueconstructor. Its
+        # purpose is only to allow closing the memmaps so we can move files.
+        self._cc = []
+
+        # Settings
+        self.config = {}
+        self.preprocessing_dialog = None
+        self.feature_dialog = None
+        self.cluster_dialog = None
+        self.init_settings_dialog()
 
         self.main_container = ttk.Frame(root)
         self.main_container.pack()
@@ -62,6 +66,7 @@ class ElectrodeSelector:
         self.button_frame_right = ttk.Frame(self.main_container)
         self.button_frame_right.pack(side='right')
 
+        self.settings_button()
         self.dataset_button()
         self.toggle_electrode_selection()
         self.save_button()
@@ -84,6 +89,13 @@ class ElectrodeSelector:
         filemenu = tk.Menu(menubar, tearoff=0)
         filemenu.add_command(label="Quit", command=self.quit)
         menubar.add_cascade(label="File", menu=filemenu)
+
+    def settings_button(self):
+        """Button to modify default settings."""
+
+        ttk.Button(self.button_frame_left, text="Settings",
+                   command=self.settings_dialog).pack(
+            fill='both', expand=True, padx=[10, 10], pady=[10, 10])
 
     def dataset_button(self):
         """Button for loading the dataset."""
@@ -182,6 +194,80 @@ class ElectrodeSelector:
                                indicatoron=False).grid(
                     row=r, column=c, padx=1, pady=1)
 
+    def init_settings_dialog(self):
+
+        pg.mkQApp()
+
+        params = gui_params.fullchain_params
+        params[0]['value'] = 100  # duration
+        params[1]['children'][0]['value'] = 100  # highpass_freq
+        params[1]['children'][1]['value'] = 5000  # lowpass_freq
+        params[2]['children'][2]['value'] = 4  # relative_threshold
+        self.preprocessing_dialog = ParamDialog(params,
+                                                "Preprocessing settings")
+        self.preprocessing_dialog.resize(350, 500)
+
+        params = gui_params.features_params_by_methods
+        params['pca_by_channel'][0]['value'] = 4  # n_features
+        self.feature_dialog = MethodDialog(
+            params, "Feature extractor settings",
+            selected_method='pca_by_channel')
+
+        params = gui_params.cluster_params_by_methods
+        params['kmeans'][0]['value'] = 3  # n_clusters
+        self.cluster_dialog = MethodDialog(params, "Clustering settings",
+                                           selected_method='kmeans')
+
+        self.update_config()
+
+    def settings_dialog(self):
+
+        has_changed = False
+        has_changed += self.preprocessing_dialog.exec_()
+        has_changed += self.feature_dialog.exec_()
+        has_changed += self.cluster_dialog.exec_()
+
+        if not has_changed:
+            return
+
+        self.update_config()
+
+        # If user has changed settings before loading dataset, we do not need
+        # to continue here.
+        if self.output_path is None:
+            return
+
+        # Move all saved results to a backup folder so the program runs spike
+        # sorter again with new settings.
+        path = os.path.join(self.output_path, '_old_settings_{}'.format(
+            self.settings_version))
+        os.mkdir(path)
+
+        # Open memmap files in catalogueconstructor may prevent moving.
+        self.close_memmap()
+
+        for sub_dir in os.listdir(self.output_path):
+            if 'channel_group_ch' in sub_dir:
+                shutil.move(os.path.join(self.output_path, sub_dir), path)
+
+        self.settings_version += 1
+
+    def update_config(self):
+
+        config = self.preprocessing_dialog.get()
+
+        config['feature_method'] = self.feature_dialog.param_method['method']
+        config['feature_kargs'] = get_dict_from_group_param(
+            self.feature_dialog.all_params[config['feature_method']],
+            cascade=True)
+
+        config['cluster_method'] = self.cluster_dialog.param_method['method']
+        config['cluster_kargs'] = get_dict_from_group_param(
+            self.cluster_dialog.all_params[config['cluster_method']],
+            cascade=True)
+
+        self.config.update(config)
+
     def load_dataset(self):
         """Load dataset."""
 
@@ -253,7 +339,13 @@ class ElectrodeSelector:
 
         self.dataio.set_probe_file(path_probe)
 
-        return tdc.CatalogueConstructor(self.dataio, cbnu=self)
+        cc = tdc.CatalogueConstructor(self.dataio, cbnu=self)
+        cc.info.update(self.config)
+        cc.flush_info()
+
+        self._cc.append(cc)
+
+        return cc
 
     def run_spikesorter(self, catalogueconstructor):
 
@@ -261,38 +353,35 @@ class ElectrodeSelector:
         self.log("Processing channel {}...".format(
             catalogueconstructor.chan_grp[2:]))
 
-        catalogueconstructor.set_preprocessor_params(
-            highpass_freq=self.config['highpass_frequency'],
-            lowpass_freq=self.config['lowpass_frequency'],
-            relative_threshold=self.config['relative_threshold'])
-        # Using the GPU only makes sense when processing large workloads
-        # (many channels in parallel)
-        # signalpreprocessor_engine='opencl', peakdetector_engine='opencl')
+        params = {}
+        params.update(self.config['preprocessor'])
+        params.update(self.config['peak_detector'])
+        catalogueconstructor.set_preprocessor_params(**params)
 
         # Median and MAD per channel
         catalogueconstructor.estimate_signals_noise()
 
         # Signal preprocessing and peak detection
-        catalogueconstructor.run_signalprocessor(
-            duration=self.config['duration'])
+        catalogueconstructor.run_signalprocessor(self.config['duration'])
 
         # Extract a few waveforms
         catalogueconstructor.extract_some_waveforms(
-            wf_left_ms=self.config['waveform_left_ms'],
-            wf_right_ms=self.config['waveform_right_ms'])
+            **self.config['extract_waveforms'])
 
         # Remove outlier spikes
-        catalogueconstructor.clean_waveforms()
+        catalogueconstructor.clean_waveforms(**self.config['clean_waveforms'])
+
+        catalogueconstructor.extract_some_noise(**self.config['noise_snippet'])
 
         # Feature extraction
         catalogueconstructor.extract_some_features(
-            method=self.config['feature_extractor'],
-            n_components_by_channel=self.config['n_components_by_channel'])
+            self.config['feature_method'], **self.config['feature_kargs'])
 
         # Clustering
-        catalogueconstructor.find_clusters(
-            method=self.config['clustering_method'],
-            n_clusters=self.config['n_clusters'])
+        catalogueconstructor.find_clusters(self.config['cluster_method'],
+                                           **self.config['cluster_kargs'])
+
+        catalogueconstructor.order_clusters()
 
         self.close_wait_window()
 
@@ -317,12 +406,24 @@ class ElectrodeSelector:
 
         # Remove any plots, because the user may have modified the clusters.
         # The plots will be re-created on demand.
-        path_plots = os.path.join(self.output_path,
-                                  'channel_group_ch{}'.format(label), 'plots')
-        if os.path.exists(path_plots):
-            for filename in os.listdir(path_plots):
-                filepath = os.path.join(path_plots, filename)
-                os.remove(filepath)
+        self.remove_plots(label)
+
+    def remove_plots(self, label):
+        """Remove plots from disk."""
+        path = os.path.join(self.output_path,
+                            'channel_group_ch{}'.format(label), 'plots')
+        if os.path.exists(path):
+            for filename in os.listdir(path):
+                os.remove(os.path.join(path, filename))
+
+    def close_memmap(self):
+        for cc in self._cc:
+            for array in list(cc.arrays.keys()):
+                cc.arrays.detach_array(array, mmap_close=True)
+            for arrays in cc.dataio.arrays.get(cc.chan_grp, []):
+                for array in list(arrays.keys()):
+                    arrays.detach_array(array, mmap_close=True)
+        self._cc = []
 
     def check_finished_loading(self):
         if self.dataio is None:
