@@ -400,7 +400,7 @@ class BaseTraceViewer(WidgetBase):
         
         data_curves *= self.gains[self.visible_channels, None]
         data_curves += self.offsets[self.visible_channels, None]
-        data_curves[:,0] = np.nan
+        # data_curves[:,0] = np.nan
         data_curves = data_curves.flatten()
         times_chunk = np.arange(sigs_chunk.shape[0], dtype='float32')/self.dataio.sample_rate+max(t1, 0)
         times_chunk_tile = np.tile(times_chunk, nb_visible)
@@ -589,7 +589,7 @@ class PeelerTraceViewer(BaseTraceViewer):
             data = data[:, self.visible_channels].T.copy()
             data *= self.gains[self.visible_channels, None]
             data += self.offsets[self.visible_channels, None]
-            data[:,0] = np.nan
+            # data[:,0] = np.nan
             data = data.flatten()
             curve.setData(times_chunk_tile, data)
         

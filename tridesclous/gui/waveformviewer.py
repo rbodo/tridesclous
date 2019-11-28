@@ -383,7 +383,7 @@ class WaveformViewerBase(WidgetBase):
             if wf is None: continue
             
             wf = wf*self.factor_y*self.delta_y + ypos[None, :]
-            wf[0,:] = np.nan
+            # wf[0,:] = np.nan
             wf = wf.T.reshape(-1)
             
             color = self.controller.qcolors.get(k, QT.QColor( 'white'))
@@ -445,7 +445,7 @@ class WaveformViewerBase(WidgetBase):
             elif self.mode=='geometry':
                 ypos = self.arr_geometry[:,1]
                 wf = wf*self.factor_y*self.delta_y + ypos[None, :]
-                wf[0,:] = np.nan
+                # wf[0,:] = np.nan
                 wf = wf.T.reshape(-1)
                 self.curve_one_waveform.setData(self.xvect, wf)
     
