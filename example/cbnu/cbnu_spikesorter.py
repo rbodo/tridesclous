@@ -608,10 +608,6 @@ class ElectrodeSelector:
             trigger_times = np.linspace(0, duration, num_triggers,
                                         endpoint=False, dtype=int)
             trigger_times *= int(1e6)  # Seconds to microseconds.
-        else:
-            # Rasterplot should start at t=0.
-            trigger_times = np.insert(trigger_times, 0, 0)
-            num_triggers += 1
 
         n = 2
         if num_clusters > n * n:
@@ -621,24 +617,28 @@ class ElectrodeSelector:
         fig, axes = plt.subplots(2, 2, figsize=(5, 5))
         for i in range(n):
             for j in range(n):
+                axes[i, j].axis('off')
                 if len(spiketrains) == 0:
                     axes[i, j].plot(0, 0)
                 else:
                     cluster_label, raster = spiketrains.popitem()
+                    if len(raster) == 0:
+                        continue
                     color = catalogueconstructor.colors[cluster_label]
                     for t in range(num_triggers - 1):
                         mask = np.logical_and(
                             np.greater_equal(raster, trigger_times[t]),
                             np.less(raster, trigger_times[t + 1]))
                         x = raster[mask]
-                        if len(x):
-                            x -= x[0]
+                        if len(x) == 0:
+                            continue
+                        x -= trigger_times[t]
                         y = (t + 1) * np.ones_like(x)
                         axes[i, j].scatter(x, y, s=5, linewidths=0,
                                            c=np.expand_dims(color, 0))
-                        axes[i, j].text(0, 0.4 * num_triggers, cluster_label,
-                                        color=color, fontsize=28)
-                axes[i, j].axis('off')
+                    axes[i, j].text(0, 0.5, cluster_label, fontsize=28,
+                                    color=color,
+                                    transform=axes[i, j].transAxes)
 
         fig.subplots_adjust(wspace=0, hspace=0)
 
