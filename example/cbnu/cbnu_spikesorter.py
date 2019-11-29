@@ -27,14 +27,6 @@ class ElectrodeSelector:
         style.theme_use('winnative')  # 'clam', 'alt', 'classic', 'default'
         self.filetypes = ['.mcd', '.msrd', '.h5']
 
-        self.num_rows = 8
-        self.num_columns = 8
-        self.to_skip = {(0, 0),
-                        (0, self.num_columns - 1),
-                        (self.num_rows - 1, 0),
-                        (self.num_rows - 1, self.num_columns - 1)}
-        self.to_disable = {(4, 0)}  # Reference electrode 15.
-
         self.plot_types = ['raster', 'waveform', 'psth', 'isi']
         self.plot_format = 'png'
 
@@ -42,17 +34,23 @@ class ElectrodeSelector:
         self.filepath = None
         self.dataio = None
         self.output_path = None
-        self.geometry = None
-        self.electrodes = []
+        self.electrodes = {}
         self.statusbar = None
-        self.settings_version = 0
+        self.interelectrode_distance = None  # micrometer
+        self.to_disable = {}  # Reference electrode 15.
+        self.labels = []
+        self.geometry = {}
+        self.electrode_window = None
+        self.generate_default_geometry()
 
-        # This is a reference to the last used catalogueconstructor. Its
-        # purpose is only to allow closing the memmaps so we can move files.
-        self._cc = []
+        # This list contains references to all catalogueconstructors in use.
+        # Its only purpose is to allow closing the memmaps so we can move
+        # files.
+        self._cc = {}
 
         # Settings
         self.config = {}
+        self.settings_version = 0
         self.preprocessing_dialog = None
         self.feature_dialog = None
         self.cluster_dialog = None
@@ -66,6 +64,7 @@ class ElectrodeSelector:
         self.button_frame_right = ttk.Frame(self.main_container)
         self.button_frame_right.pack(side='right')
 
+        # self.geometry_button()  # Enable when needed.
         self.settings_button()
         self.dataset_button()
         self.toggle_electrode_selection()
@@ -90,6 +89,13 @@ class ElectrodeSelector:
         filemenu.add_command(label="Quit", command=self.quit)
         menubar.add_cascade(label="File", menu=filemenu)
 
+    def geometry_button(self):
+        """Button for loading the electrode layout."""
+
+        ttk.Button(self.button_frame_left, text="Load geometry",
+                   command=self.load_geometry).pack(
+            fill='both', expand=True, padx=[10, 10], pady=[10, 10])
+
     def settings_button(self):
         """Button to modify default settings."""
 
@@ -107,7 +113,7 @@ class ElectrodeSelector:
     def toggle_electrode_selection(self):
 
         def toggle_all():
-            for electrode in self.electrodes:
+            for electrode in self.electrodes.values():
                 electrode.set(not electrode.get())
 
         ttk.Button(self.button_frame_left, text="Toggle all",
@@ -167,32 +173,80 @@ class ElectrodeSelector:
     def electrode_selection_frame(self):
         """Window for electrode selection."""
 
-        electrode_window = ttk.Frame(self.main_container)
-        electrode_window.pack(expand=True, side='right',
-                              padx=[10, 10], pady=[10, 10])
+        self.electrode_window = ttk.Frame(self.main_container)
+        self.electrode_window.pack(expand=True, side='right',
+                                   padx=[10, 10], pady=[10, 10])
 
-        self.geometry = []
-        interelectrode_distance = 200  # micrometer
+        for channel_idx, (r, c) in self.geometry.items():
 
-        for c in range(self.num_columns):
-            for r in range(self.num_rows):
-                if (r, c) in self.to_skip:
+            self.electrodes[channel_idx] = tk.BooleanVar(value=True)
+
+            r //= self.interelectrode_distance
+            c //= self.interelectrode_distance
+
+            if (r, c) in self.to_disable:
+                self.electrodes[channel_idx].set(False)
+
+            tk.Checkbutton(self.electrode_window,
+                           text=self.labels[channel_idx],
+                           variable=self.electrodes[channel_idx],
+                           indicatoron=False).grid(row=r, column=c,
+                                                   padx=1, pady=1)
+
+    def generate_default_geometry(self):
+        self.to_disable = {(4, 0)}  # Reference electrode 15.
+        self.interelectrode_distance = 200
+
+        num_rows = 8
+        num_columns = 8
+        to_skip = {(0, 0), (0, num_columns - 1), (num_rows - 1, 0),
+                   (num_rows - 1, num_columns - 1)}
+
+        for c in range(num_columns):
+            for r in range(num_rows):
+                if (r, c) in to_skip:
                     continue
+                i = len(self.labels)
+                self.labels.append("{}{}".format(c + 1, r + 1))
+                self.geometry[i] = (r * self.interelectrode_distance,
+                                    c * self.interelectrode_distance)
 
-                self.geometry.append((r * interelectrode_distance,
-                                      c * interelectrode_distance))
+    def load_geometry(self):
+        filepath = filedialog.askopenfilename(title="Select probe file.",
+                                              initialdir='/')
 
-                label = "{}{}".format(c + 1, r + 1)
+        if filepath in {None, ''}:
+            return
 
-                self.electrodes.append(tk.BooleanVar(value=True))
+        d = {}
+        with open(filepath) as f:
+            exec(f.read(), None, d)
+        channel_groups = d['channel_groups']
+        if len(channel_groups) > 1:
+            self.log("WARNING: Probe geometry contains more than one "
+                     "channel group. Only the first is used.")
+        channel_group = channel_groups[0]
+        if 'geometry' not in channel_group:
+            messagebox.showerror("Error", "Probe file contains no geometry.")
+            return
+        if 'channels' not in channel_group:
+            messagebox.showerror("Error", "Probe file contains no channel "
+                                          "list.")
+            return
 
-                if (r, c) in self.to_disable:
-                    self.electrodes[-1].set(False)
+        self.labels = channel_group['channels']
+        self.geometry = channel_group['geometry']
 
-                tk.Checkbutton(electrode_window, text=label,
-                               variable=(self.electrodes[-1]),
-                               indicatoron=False).grid(
-                    row=r, column=c, padx=1, pady=1)
+        # Estimate interelectrode distance. Only used for arranging plots in
+        # electrode layout.
+        coordinates = sorted(np.unique(list(self.geometry.values())))
+        diff = np.diff(coordinates)
+        self.interelectrode_distance = np.min(diff)
+
+        # Update layout.
+        self.electrode_window.destroy()
+        self.electrode_window.update()
+        self.electrode_selection_frame()
 
     def init_settings_dialog(self):
 
@@ -325,7 +379,7 @@ class ElectrodeSelector:
         if not self.check_finished_loading():
             return
 
-        label = 'ch' + label
+        label = 'ch{}'.format(label)
 
         # Get absolute row index of data array.
         channel_abs = self.dataio.datasource.channel_names.index(label)
@@ -343,7 +397,7 @@ class ElectrodeSelector:
         cc.info.update(self.config)
         cc.flush_info()
 
-        self._cc.append(cc)
+        self._cc[len(self._cc)] = cc
 
         return cc
 
@@ -417,13 +471,13 @@ class ElectrodeSelector:
                 os.remove(os.path.join(path, filename))
 
     def close_memmap(self):
-        for cc in self._cc:
+        for cc in self._cc.values():
             for array in list(cc.arrays.keys()):
                 cc.arrays.detach_array(array, mmap_close=True)
             for arrays in cc.dataio.arrays.get(cc.chan_grp, []):
                 for array in list(arrays.keys()):
                     arrays.detach_array(array, mmap_close=True)
-        self._cc = []
+        self._cc = {}
 
     def check_finished_loading(self):
         if self.dataio is None:
@@ -446,31 +500,29 @@ class ElectrodeSelector:
 
         d = {i: j for i, j in enumerate(['A', 'B', 'C', 'D', 'E', 'F', 'G'])}
 
-        channel_idx = 0
-        for c in range(self.num_columns):
-            for r in range(self.num_rows):
-                if (r, c) in self.to_skip:
-                    continue
+        saved_channels = []
+        for channel_idx, electrode in self.electrodes.items():
+            if not electrode.get():
+                continue
 
-                if not self.electrodes[channel_idx].get():
-                    channel_idx += 1
-                    continue
+            label = self.labels[channel_idx]
 
-                label = "{}{}".format(c + 1, r + 1)
+            saved_channels.append(label)
 
-                catalogueconstructor = self.run_spikesorter_on_channel(
-                    channel_idx, label)
+            catalogueconstructor = self.run_spikesorter_on_channel(channel_idx,
+                                                                   label)
 
-                s_per_tick = 1 / self.dataio.sample_rate
+            s_per_tick = 1 / self.dataio.sample_rate
 
-                spiketrains = get_spiketrains(catalogueconstructor, s_per_tick)
+            spiketrains = get_spiketrains(catalogueconstructor, s_per_tick)
 
-                for cell_label, spike_times in spiketrains.items():
-                    filename = 'ch{}_{}.mat'.format(label, d[cell_label])
-                    filepath = os.path.join(path, filename)
-                    savemat(filepath, {'timestamps': spike_times})
+            for cell_label, spike_times in spiketrains.items():
+                filename = 'ch{}_{}.mat'.format(label, d[cell_label])
+                filepath = os.path.join(path, filename)
+                savemat(filepath, {'timestamps': spike_times})
 
-                channel_idx += 1
+        self.log("Spike times of channels {} saved to {}.".format(
+            saved_channels, path))
 
     def show_plots(self, plot_type):
 
@@ -488,40 +540,36 @@ class ElectrodeSelector:
             plt.savefig(path_image_blank, bbox_inches='tight', pad_inches=0)
             plt.close()
 
-        channel_idx = 0
-        for c in range(self.num_columns):
-            for r in range(self.num_rows):
-                if (r, c) in self.to_skip:
-                    continue
+        for channel_idx, electrode in self.electrodes.items():
 
-                label = "{}{}".format(c + 1, r + 1)
-                path_plots = os.path.join(self.output_path,
-                                          'channel_group_ch{}'.format(label),
-                                          'plots')
-                if not os.path.exists(path_plots):
-                    os.makedirs(path_plots)
-                path_image = os.path.join(path_plots,
-                                          plot_type + '.' + self.plot_format)
+            label = self.labels[channel_idx]
+            path_plots = os.path.join(self.output_path,
+                                      'channel_group_ch{}'.format(label),
+                                      'plots')
+            if not os.path.exists(path_plots):
+                os.makedirs(path_plots)
+            path_image = os.path.join(path_plots,
+                                      plot_type + '.' + self.plot_format)
 
-                if not os.path.exists(path_image):
-                    if self.electrodes[channel_idx].get():
-                        cc = self.run_spikesorter_on_channel(channel_idx,
-                                                             label)
-                        self.create_plots(plot_type, path_image, cc)
-                    else:
-                        path_image = path_image_blank
+            if not os.path.exists(path_image):
+                if electrode.get():
+                    cc = self.run_spikesorter_on_channel(channel_idx, label)
+                    self.create_plots(plot_type, path_image, cc)
+                else:
+                    path_image = path_image_blank
 
-                image = tk.PhotoImage(file=path_image)
-                image = image.subsample(3)
-                command = partial(self.open_tridesclous_gui,
-                                  channel_rel=channel_idx, label=label)
-                b = tk.Button(window, image=image, compound='center',
-                              width=image.width(), height=image.height(),
-                              command=command, text='ch' + label)
-                b.grid(row=r, column=c, padx=2, pady=2, sticky='NSEW')
-                b.image = image
-
-                channel_idx += 1
+            image = tk.PhotoImage(file=path_image)
+            image = image.subsample(3)
+            command = partial(self.open_tridesclous_gui,
+                              channel_rel=channel_idx, label=label)
+            b = tk.Button(window, image=image, compound='center',
+                          width=image.width(), height=image.height(),
+                          command=command, text='ch' + label)
+            r, c = self.geometry[channel_idx]
+            r //= self.interelectrode_distance
+            c //= self.interelectrode_distance
+            b.grid(row=r, column=c, padx=2, pady=2, sticky='NSEW')
+            b.image = image
 
     def create_plots(self, plot_type, path, catalogueconstructor):
         if not hasattr(catalogueconstructor, 'colors'):
