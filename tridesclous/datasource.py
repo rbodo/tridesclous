@@ -78,14 +78,20 @@ def get_all_channel_data(stream):
 
     is_parallelizable = (np.array_equiv(scales, scales[0]) and
                          np.array_equiv(offsets, offsets[0]))
+    is_permuted = not np.array_equal(list(id_map.keys()),
+                                     list(id_map.values()))
 
     if is_parallelizable:
-        channel_data_permuted = np.array(stream.channel_data)
-        channel_data = np.empty_like(channel_data_permuted)
-        channel_data[list(id_map.keys())] = \
-            channel_data_permuted[list(id_map.values())]
+        if is_permuted:
+            channel_data_permuted = np.array(stream.channel_data)
+            channel_data = np.empty(channel_data_permuted.shape, dtype)
+            channel_data[list(id_map.keys())] = \
+                channel_data_permuted[list(id_map.values())]
+        else:
+            channel_data = np.array(stream.channel_data, dtype)
         channel_data = np.transpose(channel_data)
-        channel_data = (channel_data - offsets[0]) * scales[0]
+        np.subtract(channel_data, offsets[0], channel_data)
+        np.multiply(channel_data, scales[0], channel_data)
     else:
         import sys
         channel_data = np.empty((num_timesteps, num_channels), dtype)
