@@ -378,6 +378,7 @@ class ElectrodeSelector:
         self.settings_version += 1
 
         if self._has_time_changed:
+            self.dataio = None
             self.load_dataset(self.filepath)
             self._has_time_changed = False
 
@@ -643,7 +644,7 @@ class ElectrodeSelector:
 
         table.bind('<Configure>', lambda e: self.on_frame_configure())
 
-        self.plot_canvas.bind_all("<MouseWheel>", self.on_mousewheel)
+        table.bind("<MouseWheel>", self.on_mousewheel)
 
         path_image_blank = os.path.join(self.output_path, 'blank.png')
         if not os.path.exists(path_image_blank):
@@ -680,6 +681,7 @@ class ElectrodeSelector:
             r //= self.interelectrode_distance
             c //= self.interelectrode_distance
             b.grid(row=r, column=c, padx=2, pady=2, sticky='NSEW')
+            b.bind("<MouseWheel>", self.on_mousewheel)
             b.image = image
 
     def on_mousewheel(self, event):
