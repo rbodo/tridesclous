@@ -51,7 +51,7 @@ class CatalogueWindow(QT.QMainWindow):
         self.waveformhistviewer = WaveformHistViewer(controller=self.controller)
         self.featuretimeviewer = FeatureTimeViewer(controller=self.controller)
         
-        
+
         docks = {}
 
         docks['waveformviewer'] = QT.QDockWidget('waveformviewer',self)

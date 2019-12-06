@@ -9,13 +9,16 @@ from tkinter import filedialog, messagebox
 import matplotlib.pyplot as plt
 import numpy as np
 import pyqtgraph as pg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, \
+    NavigationToolbar2Tk
+from matplotlib.figure import Figure
 from scipy.io import savemat
 
 import tridesclous as tdc
 from tridesclous.gui import gui_params
 from tridesclous.gui.tools import ParamDialog, MethodDialog, \
     get_dict_from_group_param
-from example.cbnu.utils import get_trigger_times, get_spiketrains
+from example.cbnu.utils import get_trigger_times, get_spiketrains, get_interval
 
 
 class ElectrodeSelector:
@@ -41,6 +44,8 @@ class ElectrodeSelector:
         self.labels = []
         self.geometry = {}
         self.electrode_window = None
+        self.plot_canvas = None
+        self.plot_window = None
         self.generate_default_geometry()
 
         # This list contains references to all catalogueconstructors in use.
@@ -51,12 +56,13 @@ class ElectrodeSelector:
         # Settings
         self.config = {}
         self.settings_version = 0
+        self._has_time_changed = False
         self.preprocessing_dialog = None
         self.feature_dialog = None
         self.cluster_dialog = None
         self.init_settings_dialog()
 
-        self.main_container = ttk.Frame(root)
+        self.main_container = ttk.Frame(self.root)
         self.main_container.pack()
 
         self.button_frame_left = ttk.Frame(self.main_container)
@@ -67,6 +73,7 @@ class ElectrodeSelector:
         # self.geometry_button()  # Enable when needed.
         self.settings_button()
         self.dataset_button()
+        self.stimulus_button()
         self.toggle_electrode_selection()
         self.save_button()
         for plot_type in self.plot_types:
@@ -94,6 +101,13 @@ class ElectrodeSelector:
 
         ttk.Button(self.button_frame_left, text="Load geometry",
                    command=self.load_geometry).pack(
+            fill='both', expand=True, padx=[10, 10], pady=[10, 10])
+
+    def stimulus_button(self):
+        """Button for showing the stimulus over time."""
+
+        ttk.Button(self.button_frame_left, text="Show stimulus",
+                   command=self.show_stimulus).pack(
             fill='both', expand=True, padx=[10, 10], pady=[10, 10])
 
     def settings_button(self):
@@ -158,7 +172,7 @@ class ElectrodeSelector:
         self.wait_window.transient(self.root)
         self.wait_window.title("INFO")
         self.wait_window.lift()
-        self.wait_window.attributes('-alpha', 1)
+        self.wait_window.grab_set()
         self.wait_window.geometry('200x100' + self.initial_position)
         ttk.Label(self.wait_window, text="Working on it... Please wait."
                   ).place(relx=0.1, rely=0.3)
@@ -248,31 +262,88 @@ class ElectrodeSelector:
         self.electrode_window.update()
         self.electrode_selection_frame()
 
+    def show_stimulus(self):
+
+        if self.filepath in {None, ''}:
+            msg = "Load dataset before plotting stimulus."
+            messagebox.showerror("Info", msg)
+            return
+
+        dirname, basename = os.path.split(self.filepath)
+        basename, _ = os.path.splitext(basename)
+        trigger_path = os.path.join(dirname, basename + '_stimulus.npz')
+
+        if not os.path.exists(trigger_path):
+            msg = "File not found:\n{}".format(trigger_path)
+            messagebox.showerror("Error", msg)
+            return
+
+        trigger_data = np.load(trigger_path)['data']
+
+        window = tk.Toplevel()
+        window.title("Stimulus")
+        window.lift()
+
+        figure = Figure(figsize=(5, 5), dpi=100)
+        axis = figure.add_subplot(111)
+        axis.plot(trigger_data)
+        axis.set_xlabel("Time [s]")
+        xticks = np.linspace(0, len(trigger_data), 10)
+        xticklabels = np.round(xticks / self.dataio.sample_rate +
+                               self.config['start_time'], 2)
+        axis.set_xticks(xticks)
+        axis.set_xticklabels(xticklabels)
+        axis.format_coord = lambda x, y: 'Time: {:.6f} s'.format(
+            x / self.dataio.sample_rate + self.config['start_time'])
+        canvas = FigureCanvasTkAgg(figure, window)
+        canvas.draw()
+        canvas.get_tk_widget().pack(side=tk.BOTTOM, fill=tk.BOTH, expand=True)
+        toolbar = NavigationToolbar2Tk(canvas, window)
+        toolbar.update()
+
     def init_settings_dialog(self):
 
         pg.mkQApp()
 
+        start = 0
+        stop = 100
+
         params = gui_params.fullchain_params
-        params[0]['value'] = 100  # duration
-        params[1]['children'][0]['value'] = 100  # highpass_freq
-        params[1]['children'][1]['value'] = 5000  # lowpass_freq
-        params[2]['children'][2]['value'] = 4  # relative_threshold
+        params.insert(0, {'name': 'stop_time', 'type': 'float', 'value': stop,
+                          'suffix': 's', 'siPrefix': True})
+        params.insert(0, {'name': 'start_time', 'type': 'float',
+                          'value': start, 'suffix': 's', 'siPrefix': True})
         self.preprocessing_dialog = ParamDialog(params,
                                                 "Preprocessing settings")
         self.preprocessing_dialog.resize(350, 500)
+        p = self.preprocessing_dialog.params
+        p.param('duration').setValue(stop - start)
+        p.param('duration').hide()
+        p.param('preprocessor').param('highpass_freq').setValue(100)
+        p.param('preprocessor').param('lowpass_freq').setValue(5000)
+        p.param('peak_detector').param('relative_threshold').setValue(4)
+        p.param('start_time').setLimits((0, 1e6))
+        p.param('stop_time').setLimits((0, 1e6))
+        p.param('start_time').sigTreeStateChanged.connect(self.on_time_change)
+        p.param('stop_time').sigTreeStateChanged.connect(self.on_time_change)
 
         params = gui_params.features_params_by_methods
-        params['pca_by_channel'][0]['value'] = 4  # n_features
         self.feature_dialog = MethodDialog(
             params, "Feature extractor settings",
             selected_method='pca_by_channel')
+        self.feature_dialog.all_params['pca_by_channel'].param(
+            'n_components_by_channel').setValue(4)
 
         params = gui_params.cluster_params_by_methods
-        params['kmeans'][0]['value'] = 3  # n_clusters
         self.cluster_dialog = MethodDialog(params, "Clustering settings",
                                            selected_method='kmeans')
+        self.cluster_dialog.all_params['kmeans'].param(
+            'n_clusters').setValue(3)
 
         self.update_config()
+
+    def on_time_change(self):
+        self._has_time_changed = True
 
     def settings_dialog(self):
 
@@ -306,7 +377,19 @@ class ElectrodeSelector:
 
         self.settings_version += 1
 
+        if self._has_time_changed:
+            self.load_dataset(self.filepath)
+            self._has_time_changed = False
+
     def update_config(self):
+
+        p = self.preprocessing_dialog.params
+        start = p['start_time']
+        stop = p['stop_time']
+        if start > stop:
+            messagebox.showwarning("Error", "Selected start_time must be "
+                                            "smaller than stop_time.")
+        p.param('duration').setValue(stop - start)
 
         config = self.preprocessing_dialog.get()
 
@@ -322,12 +405,14 @@ class ElectrodeSelector:
 
         self.config.update(config)
 
-    def load_dataset(self):
+    def load_dataset(self, filepath=None):
         """Load dataset."""
 
-        filepath = filedialog.askopenfilename(
-            title="Select dataset.", initialdir='/',
-            filetypes=[('MEA files', self.filetypes), ('all files', '*.*')])
+        if filepath is None:
+            filepath = filedialog.askopenfilename(
+                title="Select dataset.", initialdir='/',
+                filetypes=[('MEA files', self.filetypes),
+                           ('all files', '*.*')])
         self.filepath = filepath
 
         has_file = self.check_dataset_filepath(filepath)
@@ -348,7 +433,7 @@ class ElectrodeSelector:
                                     filenames=[filepath], gui=self)
         self.close_wait_window()
 
-        self.log("TOOLTIP: Click on channel number to start spike sorter.")
+        self.log("TOOLTIP: Select which channels to process.")
 
     def check_dataset_filepath(self, path):
 
@@ -455,8 +540,10 @@ class ElectrodeSelector:
         cc = self.run_spikesorter_on_channel(channel_rel, label)
         gui = pg.mkQApp()
         win = tdc.CatalogueWindow(cc)
+        self.plot_window.withdraw()
         win.show()
         gui.exec_()
+        self.plot_window.deiconify()
 
         # Remove any plots, because the user may have modified the clusters.
         # The plots will be re-created on demand.
@@ -514,7 +601,8 @@ class ElectrodeSelector:
 
             s_per_tick = 1 / self.dataio.sample_rate
 
-            spiketrains = get_spiketrains(catalogueconstructor, s_per_tick)
+            spiketrains = get_spiketrains(catalogueconstructor, s_per_tick,
+                                          self.config['start_time'])
 
             for cell_label, spike_times in spiketrains.items():
                 filename = 'ch{}_{}.mat'.format(label, d[cell_label])
@@ -529,10 +617,33 @@ class ElectrodeSelector:
         if not self.check_finished_loading():
             return
 
-        window = tk.Toplevel()
-        window.transient(self.root)
-        window.title("{} plots".format(plot_type))
-        window.lift()
+        self.plot_window = tk.Toplevel()
+        self.plot_window.transient(self.root)
+        self.plot_window.title("{} plots".format(plot_type))
+        self.plot_window.lift()
+        self.plot_window.grab_set()
+
+        hsb = tk.Scrollbar(self.plot_window, orient='horizontal')
+        vsb = tk.Scrollbar(self.plot_window, orient='vertical')
+        hsb.grid(row=1, column=0, sticky='ew')
+        vsb.grid(row=0, column=1, sticky='ns')
+        self.plot_canvas = tk.Canvas(
+            self.plot_window, borderwidth=0, width=1000, height=800,
+            xscrollcommand=hsb.set, yscrollcommand=vsb.set)
+        self.plot_canvas.grid(row=0, column=0, sticky='nsew')
+        hsb.config(command=self.plot_canvas.xview)
+        vsb.config(command=self.plot_canvas.yview)
+
+        self.plot_window.grid_rowconfigure(0, weight=1)
+        self.plot_window.grid_columnconfigure(0, weight=1)
+
+        table = ttk.Frame(self.plot_canvas)
+        self.plot_canvas.create_window((0, 0), window=table, anchor='nw',
+                                       tags='table')
+
+        table.bind('<Configure>', lambda e: self.on_frame_configure())
+
+        self.plot_canvas.bind_all("<MouseWheel>", self.on_mousewheel)
 
         path_image_blank = os.path.join(self.output_path, 'blank.png')
         if not os.path.exists(path_image_blank):
@@ -562,7 +673,7 @@ class ElectrodeSelector:
             image = image.subsample(3)
             command = partial(self.open_tridesclous_gui,
                               channel_rel=channel_idx, label=label)
-            b = tk.Button(window, image=image, compound='center',
+            b = tk.Button(table, image=image, compound='center',
                           width=image.width(), height=image.height(),
                           command=command, text='ch' + label)
             r, c = self.geometry[channel_idx]
@@ -570,6 +681,12 @@ class ElectrodeSelector:
             c //= self.interelectrode_distance
             b.grid(row=r, column=c, padx=2, pady=2, sticky='NSEW')
             b.image = image
+
+    def on_mousewheel(self, event):
+        self.plot_canvas.yview_scroll(- event.delta // 120, 'units')
+
+    def on_frame_configure(self):
+        self.plot_canvas.config(scrollregion=self.plot_canvas.bbox('all'))
 
     def create_plots(self, plot_type, path, catalogueconstructor):
         if not hasattr(catalogueconstructor, 'colors'):
@@ -594,7 +711,8 @@ class ElectrodeSelector:
 
         us_per_tick = int(1e6 / self.dataio.sample_rate)
 
-        spiketrains = get_spiketrains(catalogueconstructor, us_per_tick)
+        spiketrains = get_spiketrains(catalogueconstructor, us_per_tick,
+                                      int(self.config['start_time'] * 1e6))
 
         trigger_times = get_trigger_times(self.filepath)
 
@@ -626,10 +744,8 @@ class ElectrodeSelector:
                         continue
                     color = catalogueconstructor.colors[cluster_label]
                     for t in range(num_triggers - 1):
-                        mask = np.logical_and(
-                            np.greater_equal(raster, trigger_times[t]),
-                            np.less(raster, trigger_times[t + 1]))
-                        x = raster[mask]
+                        x = get_interval(raster, trigger_times[t],
+                                         trigger_times[t + 1])
                         if len(x) == 0:
                             continue
                         x -= trigger_times[t]
@@ -678,7 +794,8 @@ class ElectrodeSelector:
 
         us_per_tick = int(1e6 / self.dataio.sample_rate)
 
-        spiketrains = get_spiketrains(catalogueconstructor, us_per_tick)
+        spiketrains = get_spiketrains(catalogueconstructor, us_per_tick,
+                                      int(self.config['start_time'] * 1e6))
 
         trigger_times = get_trigger_times(self.filepath)
 
@@ -739,7 +856,8 @@ class ElectrodeSelector:
 
         us_per_tick = int(1e6 / self.dataio.sample_rate)
 
-        spiketrains = get_spiketrains(catalogueconstructor, us_per_tick)
+        spiketrains = get_spiketrains(catalogueconstructor, us_per_tick,
+                                      int(self.config['start_time'] * 1e6))
 
         num_clusters = len(spiketrains)
 
@@ -762,8 +880,11 @@ class ElectrodeSelector:
                     y = np.ravel([counts, counts], 'F')
                     axes[i, j].fill_between(x, 0, y, facecolor=color,
                                             edgecolor='k')
-                    axes[i, j].text(0.7 * bin_edges[-1], 0.7 * np.max(counts),
-                                    cluster_label, color=color, fontsize=28)
+                    # When there is an extremely long ISI, the label causes
+                    # the figure to be too large.
+                    # axes[i, j].text(0.7 * bin_edges[-1],
+                    #                 0.7 * np.max(counts),
+                    #                 cluster_label, color=color, fontsize=28)
                 axes[i, j].axis('off')
 
         fig.subplots_adjust(wspace=0, hspace=0)

@@ -233,7 +233,7 @@ class WaveformViewerBase(WidgetBase):
         self.plot1.clear()
         self.plot2.clear()
         self.plot1.addItem(self.curve_one_waveform)
-        
+
         if self.controller.spike_index ==[]:
             return
 
@@ -340,6 +340,12 @@ class WaveformViewerBase(WidgetBase):
         self.plot1.setYRange(*self._y1_range, padding = 0.0)
         self.plot2.setYRange(*self._y2_range, padding = 0.0)
 
+        ms_per_tick = 1e3 / self.controller.cc.dataio.sample_rate
+        ticks = [(x, '{:.2f}'.format(x * ms_per_tick)) for x in xvect[::10]]
+        self.plot1.getAxis('bottom').setTicks([ticks])
+        self.plot2.getAxis('bottom').setTicks([ticks])
+        # self.plot2.setLabel('bottom', 'Time', 'ms')
+
         
 
     def refresh_mode_geometry(self, cluster_visible):
@@ -351,7 +357,12 @@ class WaveformViewerBase(WidgetBase):
             self._y1_range = tuple(self.viewBox1.state['viewRange'][1])
 
         self.plot1.clear()
-        
+        # Turn off axes in geometry mode. They are confusing because their unit
+        # is micrometer, but the plot shown is a waveform with units in time
+        # and volt.
+        self.plot1.showAxis('left', False)
+        self.plot1.showAxis('bottom', False)
+
         if self.xvect is None:
             return
         
@@ -412,7 +423,8 @@ class WaveformViewerBase(WidgetBase):
         
         if self._x_range is None:
             self._x_range = np.min(self.xvect), np.max(self.xvect)
-            self._y1_range = np.min(ypos)-self.delta_y*2, np.max(ypos)+self.delta_y*2
+        self._y1_range = (np.min(ypos)-self.delta_y*2) / self.factor_y, \
+                         (np.max(ypos)+self.delta_y*2) / self.factor_y
         
         self.plot1.setXRange(*self._x_range, padding = 0.0)
         self.plot1.setYRange(*self._y1_range, padding = 0.0)

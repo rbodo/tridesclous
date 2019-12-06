@@ -50,7 +50,9 @@ class BaseTraceViewer(WidgetBase):
     def __init__(self,controller=None, signal_type='initial', parent=None):
         WidgetBase.__init__(self, parent=parent, controller=controller)
 
-        self.triggers = get_trigger_times(self.controller.cc.cbnu.filepath)
+        start_time = self.controller.cc.cbnu.config['start_time'] * 1e6
+        self.triggers = \
+            get_trigger_times(self.controller.cc.cbnu.filepath) - start_time
 
         self.dataio = controller.dataio
         self.signal_type = signal_type
@@ -496,7 +498,10 @@ class BaseTraceViewer(WidgetBase):
         #ranges
         self.plot.setXRange( t1, t2, padding = 0.0)
         self.plot.setYRange(-.5, nb_visible-.5, padding = 0.0)
-        
+        t0 = self.controller.cc.cbnu.config['start_time']
+        ticks = [(x, '{:.2f}'.format(t0 + x)) for x in np.linspace(t1, t2, 10)]
+        self.plot.getAxis('bottom').setTicks([ticks])
+
         #TODO : do some thing here
         #~ self.graphicsview.repaint()
 

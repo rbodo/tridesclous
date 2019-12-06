@@ -5,6 +5,7 @@ import numpy as np
 import re
 from collections import OrderedDict
 
+from example.cbnu.utils import get_interval
 
 data_source_classes = OrderedDict()
 
@@ -114,7 +115,8 @@ class H5DataSource(DataSourceBase):
     def __init__(self, filenames, gui=None):
         DataSourceBase.__init__(self)
 
-        self.log = print if gui is None else gui.log
+        self.gui = gui
+        self.log = print if self.gui is None else self.gui.log
 
         self.filenames = [filenames] if isinstance(filenames, str) \
             else filenames
@@ -129,6 +131,9 @@ class H5DataSource(DataSourceBase):
 
     def load(self):
         from McsPy.McsData import RawData
+
+        start_time = int(self.gui.config['start_time'] * 1e6)
+        stop_time = int(self.gui.config['stop_time'] * 1e6)
 
         sample_rates = []
         dtypes = []
@@ -150,13 +155,20 @@ class H5DataSource(DataSourceBase):
             assert electrode_data is not None, "Electrode data not found."
 
             traces, sample_rate = get_all_channel_data(electrode_data)
-            self.array_sources.append(traces)
+            us_per_tick = int(1e6 / sample_rate)
+            start_tick = start_time // us_per_tick
+            stop_tick = stop_time // us_per_tick
+            full_duration = len(traces)
+            if stop_tick >= full_duration:
+                stop_tick = full_duration
+            self.array_sources.append(traces[start_tick:stop_tick])
             sample_rates.append(sample_rate)
             dtypes.append(traces.dtype)
             num_channels.append(traces.shape[1])
             channel_names_of_file = get_channel_names(electrode_data)
             channel_names.append(channel_names_of_file)
 
+            trigger_data = None
             trigger_times = None
             event_streams = data.recordings[0].event_streams
             if event_streams is not None:
@@ -166,22 +178,31 @@ class H5DataSource(DataSourceBase):
                     if d.info.label in {'STG 1 Single Pulse Start',
                                         'Digital Event Detector Event'}:
                         trigger_times = d.data[0]
+                        trigger_ticks = trigger_times // us_per_tick
+                        trigger_data = np.zeros(full_duration)
+                        trigger_data[trigger_ticks] = 1
+                        trigger_data = trigger_data[start_tick:stop_tick]
+                        trigger_times = get_interval(trigger_times, start_time,
+                                                     stop_time)
                         break
             else:
                 analog_stream_id = (stream_id + 1) % 2
                 trigger_data = analog_streams[analog_stream_id].channel_data[0]
-                trigger_times = np.flatnonzero(np.diff(trigger_data) >
+                trigger_ticks = np.flatnonzero(np.diff(trigger_data) >
                                                np.abs(np.min(trigger_data)))
-                us_per_tick = int(1e6 / sample_rate)
-                trigger_times *= us_per_tick
+                trigger_times = trigger_ticks * us_per_tick
+                trigger_times = get_interval(trigger_times, start_time,
+                                             stop_time)
+                trigger_data = trigger_data[start_tick:stop_tick]
 
             if trigger_times is None:
                 trigger_times = []
+                trigger_data = np.zeros(stop_tick - start_tick)
 
             dirname, basename = os.path.split(filename)
             basename, _ = os.path.splitext(basename)
-            np.savez_compressed(os.path.join(
-                dirname, basename + '_trigger'), trigger_times)
+            np.savez_compressed(os.path.join(dirname, basename + '_stimulus'),
+                                times=trigger_times, data=trigger_data)
 
         # Make sure that every file uses the same sample rate, dtype, etc.
         assert np.array_equiv(sample_rates, sample_rates[0]), \
