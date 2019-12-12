@@ -834,6 +834,9 @@ class ElectrodeSelector:
                                      linewidths=0.5, lineoffsets=-1)
                 axes[i, j].text(0, 0.5, cluster_label, fontsize=28,
                                 color=color, transform=axes[i, j].transAxes)
+                axes[i, j].vlines(0, *axes[i, j].get_ylim(), linewidth=1,
+                                  alpha=0.9)
+                axes[i, j].set_xlim(-pre, post)
 
         fig.subplots_adjust(wspace=0, hspace=0)
 
@@ -932,8 +935,10 @@ class ElectrodeSelector:
                                             edgecolor='k')
                     axes[i, j].text(0.7 * x[-1], 0.7 * ylim, cluster_label,
                                     color=color, fontsize=28)
+                    axes[i, j].vlines(0, 0, ylim)
                 axes[i, j].axis('off')
                 axes[i, j].set_ylim(0, ylim)
+                axes[i, j].set_xlim(-pre/1e6, post/1e6)
 
         fig.subplots_adjust(wspace=0, hspace=0)
 

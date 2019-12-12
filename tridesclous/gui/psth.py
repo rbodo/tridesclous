@@ -112,6 +112,7 @@ class PSTH(WidgetBase):
                 txt.setPos(0, ylim)
                 plt.addItem(txt)
                 plt.setYRange(0, ylim)
+                plt.setXRange(-pre / 1e6, post / 1e6)
 
                 viewboxes[-1].doubleclicked.connect(self.open_settings)
 
