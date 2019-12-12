@@ -10,6 +10,7 @@ import win32api
 import matplotlib.pyplot as plt
 import numpy as np
 import pyqtgraph as pg
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, \
     NavigationToolbar2Tk
 from matplotlib.figure import Figure
@@ -184,11 +185,11 @@ class ElectrodeSelector:
 
     def show_wait_window(self):
         self.wait_window = tk.Toplevel()
+        self.wait_window.geometry('200x100' + self.initial_position)
         self.wait_window.transient(self.root)
         self.wait_window.title("INFO")
         self.wait_window.lift()
         self.wait_window.grab_set()
-        self.wait_window.geometry('200x100' + self.initial_position)
         ttk.Label(self.wait_window, text="Working on it... Please wait."
                   ).place(relx=0.1, rely=0.3)
 
@@ -767,17 +768,17 @@ class ElectrodeSelector:
             catalogueconstructor.refresh_colors()
 
         if plot_type == 'raster':
-            self.plot_raster(catalogueconstructor)
+            canvas = self.plot_raster(catalogueconstructor)
         elif plot_type == 'waveform':
-            self.plot_waveform(catalogueconstructor)
+            canvas = self.plot_waveform(catalogueconstructor)
         elif plot_type == 'psth':
-            self.plot_psth(catalogueconstructor)
+            canvas = self.plot_psth(catalogueconstructor)
         elif plot_type == 'isi':
-            self.plot_isi(catalogueconstructor)
+            canvas = self.plot_isi(catalogueconstructor)
         else:
             raise NotImplementedError
 
-        plt.savefig(path, bbox_inches='tight', pad_inches=0)
+        canvas.print_figure(path, bbox_inches='tight', pad_inches=0)
         plt.close()
 
     def plot_raster(self, catalogueconstructor):
@@ -808,7 +809,9 @@ class ElectrodeSelector:
             print("WARNING: Only {} out of {} available plots can be shown."
                   "".format(n * n, num_clusters))
 
-        fig, axes = plt.subplots(2, 2, figsize=(5, 5))
+        fig = Figure(figsize=(5, 5))
+        canvas = FigureCanvas(fig)
+        axes = fig.subplots(2, 2)
         for i in range(n):
             for j in range(n):
                 axes[i, j].axis('off')
@@ -839,6 +842,7 @@ class ElectrodeSelector:
                 axes[i, j].set_xlim(-pre, post)
 
         fig.subplots_adjust(wspace=0, hspace=0)
+        return canvas
 
     @staticmethod
     def plot_waveform(catalogueconstructor):
@@ -854,7 +858,9 @@ class ElectrodeSelector:
             print("WARNING: Only {} out of {} available plots can be shown."
                   "".format(n * n, len(waveforms)))
 
-        fig, axes = plt.subplots(2, 2, figsize=(5, 5))
+        fig = Figure(figsize=(5, 5))
+        canvas = FigureCanvas(fig)
+        axes = fig.subplots(2, 2)
         for i in range(n):
             for j in range(n):
                 if len(waveforms) == 0:
@@ -870,6 +876,7 @@ class ElectrodeSelector:
                 axes[i, j].set_ylim(ymin, ymax)
 
         fig.subplots_adjust(wspace=0, hspace=0)
+        return canvas
 
     def plot_psth(self, catalogueconstructor):
         """Plot PSTH of spiketrains."""
@@ -923,7 +930,9 @@ class ElectrodeSelector:
             print("WARNING: Only {} out of {} available plots can be shown."
                   "".format(n * n, len(histograms)))
 
-        fig, axes = plt.subplots(2, 2, figsize=(5, 5))
+        fig = Figure(figsize=(5, 5))
+        canvas = FigureCanvas(fig)
+        axes = fig.subplots(2, 2)
         for i in range(n):
             for j in range(n):
                 if len(histograms) == 0:
@@ -941,6 +950,7 @@ class ElectrodeSelector:
                 axes[i, j].set_xlim(-pre/1e6, post/1e6)
 
         fig.subplots_adjust(wspace=0, hspace=0)
+        return canvas
 
     def plot_isi(self, catalogueconstructor, num_bins=100):
         """Plot ISI of spiketrains."""
@@ -957,7 +967,9 @@ class ElectrodeSelector:
             print("WARNING: Only {} out of {} available plots can be shown."
                   "".format(n * n, num_clusters))
 
-        fig, axes = plt.subplots(2, 2, figsize=(5, 5))
+        fig = Figure(figsize=(5, 5))
+        canvas = FigureCanvas(fig)
+        axes = fig.subplots(2, 2)
         for i in range(n):
             for j in range(n):
                 if len(spiketrains) == 0:
@@ -979,6 +991,7 @@ class ElectrodeSelector:
                 axes[i, j].axis('off')
 
         fig.subplots_adjust(wspace=0, hspace=0)
+        return canvas
 
 
 def main():
