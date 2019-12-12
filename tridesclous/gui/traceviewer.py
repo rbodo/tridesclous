@@ -86,10 +86,16 @@ class BaseTraceViewer(WidgetBase):
     
     def create_toolbar(self):
         tb = self.toolbar = QT.QToolBar()
-        
+
+        # Trigger selection
+        if len(self.triggers):
+            trigger_selector = TriggerSeeker(self.triggers)
+            tb.addWidget(trigger_selector)
+            trigger_selector.time_changed.connect(self.seek)
+
         #Segment selection
         self.combo_seg = QT.QComboBox()
-        tb.addWidget(self.combo_seg)
+        # tb.addWidget(self.combo_seg)  # Disabled because we don't need it.
         self.combo_seg.addItems([ 'Segment {}'.format(seg_num) for seg_num in range(self.dataio.nb_segment) ])
         self._seg_pos = 0
         self.seg_num = self._seg_pos
@@ -104,15 +110,15 @@ class BaseTraceViewer(WidgetBase):
 
         # time slider
         self.timeseeker = TimeSeeker(show_slider=False)
-        tb.addWidget(self.timeseeker)
+        # tb.addWidget(self.timeseeker)  # Disabled because we don't need it.
         self.timeseeker.time_changed.connect(self.seek)
         
         # winsize
         self.xsize = .5
-        tb.addWidget(QT.QLabel(u'X size (s)'))
+        # tb.addWidget(QT.QLabel(u'X size (s)'))  # Disabled because we don't need it.
         self.spinbox_xsize = pg.SpinBox(value = self.xsize, bounds = [0.001, self.params['xsize_max']], suffix = 's', siPrefix = True, step = 0.1, dec = True)
         self.spinbox_xsize.sigValueChanged.connect(self.on_xsize_changed)
-        tb.addWidget(self.spinbox_xsize)
+        # tb.addWidget(self.spinbox_xsize)  # Disabled because we don't need it.
         tb.addSeparator()
         self.spinbox_xsize.sigValueChanged.connect(self.refresh)
         
@@ -125,12 +131,6 @@ class BaseTraceViewer(WidgetBase):
         tb.addWidget(but)
         self.select_button = QT.QPushButton('select', checkable = True)
         tb.addWidget(self.select_button)
-
-        # Trigger selection
-        if len(self.triggers):
-            trigger_selector = TriggerSeeker(self.triggers)
-            tb.addWidget(trigger_selector)
-            trigger_selector.time_changed.connect(self.seek)
 
         self.layout.addWidget(self.toolbar)
         

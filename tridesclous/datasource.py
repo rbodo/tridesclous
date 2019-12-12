@@ -196,13 +196,19 @@ class H5DataSource(DataSourceBase):
                 trigger_data = trigger_data[start_tick:stop_tick]
 
             if trigger_times is None:
-                trigger_times = []
+                trigger_times = np.array([])
                 trigger_data = np.zeros(stop_tick - start_tick)
 
+            # Save stimulus as compressed numpy file for later use in GUI.
             dirname, basename = os.path.split(filename)
             basename, _ = os.path.splitext(basename)
             np.savez_compressed(os.path.join(dirname, basename + '_stimulus'),
                                 times=trigger_times, data=trigger_data)
+            # Save another copy as text file for easier access in matlab.
+            np.savetxt(os.path.join(dirname, basename + '_trigger_times.txt'),
+                       trigger_times, fmt='%d')
+            np.savetxt(os.path.join(dirname, basename + '_trigger_data.txt'),
+                       trigger_data, fmt='%d')
 
         # Make sure that every file uses the same sample rate, dtype, etc.
         assert np.array_equiv(sample_rates, sample_rates[0]), \

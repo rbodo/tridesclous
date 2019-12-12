@@ -6,6 +6,7 @@ import tkinter.ttk as ttk
 from functools import partial
 from tkinter import filedialog, messagebox
 
+import win32api
 import matplotlib.pyplot as plt
 import numpy as np
 import pyqtgraph as pg
@@ -61,6 +62,12 @@ class ElectrodeSelector:
         self.feature_dialog = None
         self.cluster_dialog = None
         self.init_settings_dialog()
+        self.plot_settings_window = None
+        self.plot_settings = {'pre': tk.DoubleVar(value=1),
+                              'post': tk.DoubleVar(value=1),
+                              'num_bins': tk.IntVar(value=100),
+                              'bin_method': tk.StringVar(value='auto')}
+        self._old_values = {}
 
         self.main_container = ttk.Frame(self.root)
         self.main_container.pack()
@@ -71,7 +78,7 @@ class ElectrodeSelector:
         self.button_frame_right.pack(side='right')
 
         # self.geometry_button()  # Enable when needed.
-        self.settings_button()
+        self.top_level_menu()
         self.dataset_button()
         self.stimulus_button()
         self.toggle_electrode_selection()
@@ -81,10 +88,15 @@ class ElectrodeSelector:
         self.electrode_selection_frame()
         self.status_widgets()
 
+        # Get coordinates of secondary monitor
+        monitors = win32api.EnumDisplayMonitors()
+        i = max(0, len(monitors) - 1)
+        x0, y0, x1, y1 = monitors[i][2]  # Top left and bottom right corners
         # Set x and y coordinates for the Tk root window.
         ws = root.winfo_screenwidth()  # width of the screen
         hs = root.winfo_screenheight()  # height of the screen
-        self.initial_position = '+{w}+{h}'.format(w=(ws // 3), h=(hs // 3))
+        self.initial_position = '+{w}+{h}'.format(w=(ws // 3 + x0),
+                                                  h=(hs // 3 + y0))
         self.root.geometry(self.initial_position)
 
     def top_level_menu(self):
@@ -93,6 +105,9 @@ class ElectrodeSelector:
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
         filemenu = tk.Menu(menubar, tearoff=0)
+        filemenu.add_command(label="Settings", command=self.settings_dialog)
+        filemenu.add_command(label="Plot settings",
+                             command=self.show_plot_settings)
         filemenu.add_command(label="Quit", command=self.quit)
         menubar.add_cascade(label="File", menu=filemenu)
 
@@ -281,6 +296,7 @@ class ElectrodeSelector:
         trigger_data = np.load(trigger_path)['data']
 
         window = tk.Toplevel()
+        window.geometry(self.initial_position)
         window.title("Stimulus")
         window.lift()
 
@@ -381,6 +397,60 @@ class ElectrodeSelector:
             self.dataio = None
             self.load_dataset(self.filepath)
             self._has_time_changed = False
+
+    def show_plot_settings(self):
+        self.plot_settings_window = tk.Toplevel()
+        self.plot_settings_window.geometry(self.initial_position)
+        self.plot_settings_window.title("Plot settings")
+        self.plot_settings_window.transient(self.root)
+        self.plot_settings_window.lift()
+        self.plot_settings_window.grab_set()
+        self.plot_settings_window.protocol('WM_DELETE_WINDOW',
+                                           self.confirm_settings)
+
+        self._old_values = {k: v.get() for k, v in self.plot_settings.items()}
+
+        ttk.Label(self.plot_settings_window, text="bin_method").grid(
+            row=0, column=0, padx=(10, 10), pady=(10, 10))
+        methods = ['', 'manual', 'auto', 'fd', 'doane', 'scott', 'stone',
+                   'rice', 'sturges', 'sqrt']
+        ttk.OptionMenu(self.plot_settings_window,
+                       self.plot_settings['bin_method'], *methods).grid(
+            row=0, column=1, padx=(10, 10), pady=(10, 10))
+        ttk.Label(self.plot_settings_window, text="num_bins").grid(
+            row=1, column=0, padx=(10, 10), pady=(10, 10))
+        ttk.Spinbox(self.plot_settings_window, from_=1, to=1e6, width=5,
+                    textvariable=self.plot_settings['num_bins']).grid(
+            row=1, column=1, padx=(10, 10), pady=(10, 10))
+        ttk.Label(self.plot_settings_window, text="pre").grid(
+            row=2, column=0, padx=(10, 10), pady=(10, 10))
+        ttk.Spinbox(self.plot_settings_window, from_=0, to=1e6, increment=0.1,
+                    width=5, textvariable=self.plot_settings['pre']).grid(
+            row=2, column=1, padx=(10, 10), pady=(10, 10))
+        ttk.Label(self.plot_settings_window, text="post").grid(
+            row=3, column=0, padx=(10, 10), pady=(10, 10))
+        ttk.Spinbox(self.plot_settings_window, from_=0, to=1e6, increment=0.1,
+                    width=5, textvariable=self.plot_settings['post']).grid(
+            row=3, column=1, padx=(10, 10), pady=(10, 10))
+
+        ttk.Button(self.plot_settings_window, text="OK",
+                   command=self.confirm_settings).grid(
+            row=4, column=0, columnspan=2, padx=(10, 10), pady=(10, 10))
+
+    def confirm_settings(self):
+
+        has_changed = 0
+        for k, v in self.plot_settings.items():
+            has_changed += self._old_values[k] != v.get()
+
+        if has_changed and self.output_path is not None:
+            for filename in os.listdir(self.output_path):
+                path = os.path.join(self.output_path, filename)
+                if os.path.isdir(path) and 'channel_group_ch' in filename:
+                    self.remove_plots(filename[-2:])
+
+        self.plot_settings_window.destroy()
+        self.plot_settings_window.update()
 
     def update_config(self):
 
@@ -619,6 +689,7 @@ class ElectrodeSelector:
             return
 
         self.plot_window = tk.Toplevel()
+        self.plot_window.geometry(self.initial_position)
         self.plot_window.transient(self.root)
         self.plot_window.title("{} plots".format(plot_type))
         self.plot_window.lift()
@@ -729,6 +800,9 @@ class ElectrodeSelector:
                                         endpoint=False, dtype=int)
             trigger_times *= int(1e6)  # Seconds to microseconds.
 
+        pre = int(self.plot_settings['pre'].get() * 1e6)
+        post = int(self.plot_settings['post'].get() * 1e6)
+
         n = 2
         if num_clusters > n * n:
             print("WARNING: Only {} out of {} available plots can be shown."
@@ -740,23 +814,26 @@ class ElectrodeSelector:
                 axes[i, j].axis('off')
                 if len(spiketrains) == 0:
                     axes[i, j].plot(0, 0)
-                else:
-                    cluster_label, raster = spiketrains.popitem()
-                    if len(raster) == 0:
-                        continue
-                    color = catalogueconstructor.colors[cluster_label]
-                    for t in range(num_triggers - 1):
-                        x = get_interval(raster, trigger_times[t],
-                                         trigger_times[t + 1])
-                        if len(x) == 0:
-                            continue
-                        x -= trigger_times[t]
-                        y = (t + 1) * np.ones_like(x)
-                        axes[i, j].scatter(x, y, s=5, linewidths=0,
-                                           c=np.expand_dims(color, 0))
-                    axes[i, j].text(0, 0.5, cluster_label, fontsize=28,
-                                    color=color,
-                                    transform=axes[i, j].transAxes)
+                    continue
+                cluster_label, cluster_trains = spiketrains.popitem()
+                if len(cluster_trains) == 0:
+                    continue
+
+                spike_times_section = get_interval(cluster_trains,
+                                                   trigger_times[0] - pre,
+                                                   trigger_times[-1] + post)
+                spike_times_zerocentered = []
+                color = catalogueconstructor.colors[cluster_label]
+                for trigger_time in trigger_times:
+                    x = get_interval(spike_times_section, trigger_time - pre,
+                                     trigger_time + post)
+                    if len(x):
+                        x -= trigger_time
+                    spike_times_zerocentered.append(x)
+                axes[i, j].eventplot(spike_times_zerocentered, color=color,
+                                     linewidths=0.5, lineoffsets=-1)
+                axes[i, j].text(0, 0.5, cluster_label, fontsize=28,
+                                color=color, transform=axes[i, j].transAxes)
 
         fig.subplots_adjust(wspace=0, hspace=0)
 
@@ -791,7 +868,7 @@ class ElectrodeSelector:
 
         fig.subplots_adjust(wspace=0, hspace=0)
 
-    def plot_psth(self, catalogueconstructor, num_bins=100):
+    def plot_psth(self, catalogueconstructor):
         """Plot PSTH of spiketrains."""
 
         us_per_tick = int(1e6 / self.dataio.sample_rate)
@@ -801,33 +878,42 @@ class ElectrodeSelector:
 
         trigger_times = get_trigger_times(self.filepath)
 
-        num_triggers = len(trigger_times)
-
         # Return if there are no triggers.
-        if num_triggers == 0:
+        if len(trigger_times) == 0:
             print("No trigger data available; aborting PSTH plot.")
             return
 
-        bin_edges = None
+        pre = int(self.plot_settings['pre'].get() * 1e6)
+        post = int(self.plot_settings['post'].get() * 1e6)
+        bin_method = self.plot_settings['bin_method'].get()
+        num_bins = self.plot_settings['num_bins'].get() \
+            if bin_method == 'manual' else bin_method
+
         histograms = {}
         ylim = 0
         for cluster_label, cluster_trains in spiketrains.items():
-            cluster_counts = np.zeros(num_bins)
-            for t in range(num_triggers - 1):
-                counts, bin_edges = np.histogram(cluster_trains, bins=num_bins,
-                                                 range=(trigger_times[t],
-                                                        trigger_times[t + 1]))
-                cluster_counts += counts
-            # No point in normalizing here because we've only counted some
-            # subset of all the spikes (the catalogue constructor does not
-            # assign all peaks to waveforms; this is the job of the peeler).
-            histograms[cluster_label] = cluster_counts
+            spike_times_section = get_interval(cluster_trains,
+                                               trigger_times[0] - pre,
+                                               trigger_times[-1] + post)
+
+            spike_times_zerocentered = []
+
+            for trigger_time in trigger_times:
+                t_pre = trigger_time - pre
+                t_post = trigger_time + post
+
+                x = get_interval(spike_times_section, t_pre, t_post)
+                if len(x):
+                    x -= trigger_time
+                spike_times_zerocentered += list(x)
+
+            cluster_counts, bin_edges = np.histogram(spike_times_zerocentered,
+                                                     num_bins)
+            histograms[cluster_label] = (bin_edges / 1e6, cluster_counts)
             # Update common plot range for y axis.
             max_count = np.max(cluster_counts)
             if max_count > ylim:
                 ylim = max_count
-        bin_edges -= bin_edges[0]  # Shift to zero.
-        bin_edges /= 1e6  # microseconds to seconds.
 
         n = 2
         if len(histograms) > n * n:
@@ -840,14 +926,12 @@ class ElectrodeSelector:
                 if len(histograms) == 0:
                     axes[i, j].plot(0, 0)
                 else:
-                    cluster_label, cluster_counts = histograms.popitem()
+                    cluster_label, (x, y) = histograms.popitem()
                     color = catalogueconstructor.colors[cluster_label]
-                    x = np.ravel([bin_edges[:-1], bin_edges[1:]], 'F')
-                    y = np.ravel([cluster_counts, cluster_counts], 'F')
-                    axes[i, j].fill_between(x, 0, y, facecolor=color,
+                    axes[i, j].fill_between(x[:-1], 0, y, facecolor=color,
                                             edgecolor='k')
-                    axes[i, j].text(0.7 * bin_edges[-1], 0.7 * ylim,
-                                    cluster_label, color=color, fontsize=28)
+                    axes[i, j].text(0.7 * x[-1], 0.7 * ylim, cluster_label,
+                                    color=color, fontsize=28)
                 axes[i, j].axis('off')
                 axes[i, j].set_ylim(0, ylim)
 

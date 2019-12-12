@@ -50,10 +50,8 @@ class PSTH(WidgetBase):
 
     def initialize_plot(self):
 
-        num_triggers = len(self.trigger_times)
-
         # Return if there are no triggers.
-        if num_triggers == 0:
+        if len(self.trigger_times) == 0:
             return
 
         us_per_tick = int(1e6 / self.catalogueconstructor.dataio.sample_rate)
@@ -77,8 +75,7 @@ class PSTH(WidgetBase):
 
             spike_times_zerocentered = []
 
-            for i in range(num_triggers):
-                trigger_time = self.trigger_times[i]
+            for trigger_time in self.trigger_times:
                 t_pre = trigger_time - pre
                 t_post = trigger_time + post
 
