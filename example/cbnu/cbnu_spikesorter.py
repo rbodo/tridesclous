@@ -42,7 +42,7 @@ class ElectrodeSelector:
         self.electrodes = {}
         self.statusbar = None
         self.interelectrode_distance = None  # micrometer
-        self.to_disable = {}  # Reference electrode 15.
+        self.to_disable = []  # Reference electrode 15.
         self.labels = []
         self.geometry = {}
         self.electrode_window = None
@@ -143,8 +143,12 @@ class ElectrodeSelector:
     def toggle_electrode_selection(self):
 
         def toggle_all():
-            for electrode in self.electrodes.values():
-                electrode.set(not electrode.get())
+            for channel_idx, electrode in self.electrodes.items():
+                (r, c) = self.geometry[channel_idx]
+                r //= self.interelectrode_distance
+                c //= self.interelectrode_distance
+                if (r, c) not in self.to_disable:
+                    electrode.set(not electrode.get())
 
         ttk.Button(self.button_frame_left, text="Toggle all",
                    command=toggle_all).pack(fill='both', expand=True,
@@ -214,17 +218,19 @@ class ElectrodeSelector:
             r //= self.interelectrode_distance
             c //= self.interelectrode_distance
 
+            state = 'normal'
             if (r, c) in self.to_disable:
                 self.electrodes[channel_idx].set(False)
+                state = 'disabled'
 
-            tk.Checkbutton(self.electrode_window,
+            tk.Checkbutton(self.electrode_window, state=state,
                            text=self.labels[channel_idx],
                            variable=self.electrodes[channel_idx],
                            indicatoron=False).grid(row=r, column=c,
                                                    padx=1, pady=1)
 
     def generate_default_geometry(self):
-        self.to_disable = {(4, 0)}  # Reference electrode 15.
+        self.to_disable.append((4, 0))  # Reference electrode 15.
         self.interelectrode_distance = 200
 
         num_rows = 8
@@ -240,6 +246,14 @@ class ElectrodeSelector:
                 self.labels.append("{}{}".format(c + 1, r + 1))
                 self.geometry[i] = (r * self.interelectrode_distance,
                                     c * self.interelectrode_distance)
+
+    def find_channels_without_data(self):
+        for channel_idx, (r, c) in self.geometry.items():
+            r //= self.interelectrode_distance
+            c //= self.interelectrode_distance
+            if "ch{}{}".format(c + 1, r + 1) not in \
+                    self.dataio.datasource.channel_names:
+                self.to_disable.append((r, c))
 
     def load_geometry(self):
         filepath = filedialog.askopenfilename(title="Select probe file.",
@@ -503,6 +517,15 @@ class ElectrodeSelector:
         self.show_wait_window()
         self.dataio.set_data_source(type=extension[1:],
                                     filenames=[filepath], gui=self)
+
+        # Update layout (depending on the dataset, some electrodes may have to
+        # be disabled).
+        self.find_channels_without_data()
+        if len(self.to_disable) > 1:  # Always have reference electrode
+            self.electrode_window.destroy()
+            self.electrode_window.update()
+            self.electrode_selection_frame()
+
         self.close_wait_window()
 
         self.log("TOOLTIP: Select which channels to process.")
@@ -561,8 +584,8 @@ class ElectrodeSelector:
     def run_spikesorter(self, catalogueconstructor):
 
         self.show_wait_window()
-        self.log("Processing channel {}...".format(
-            catalogueconstructor.chan_grp[2:]))
+        label = catalogueconstructor.chan_grp[2:]
+        self.log("Processing channel {}...".format(label))
 
         params = {}
         params.update(self.config['preprocessor'])
@@ -578,6 +601,13 @@ class ElectrodeSelector:
         # Extract a few waveforms
         catalogueconstructor.extract_some_waveforms(
             **self.config['extract_waveforms'])
+
+        if len(catalogueconstructor.some_waveforms) == 0:
+            self.close_wait_window()
+            msg = "Could not find any waveforms for electrode {}.\n" \
+                  "Consider disabling it.".format(label)
+            messagebox.showwarning("Warning", msg)
+            return False
 
         # Remove outlier spikes
         catalogueconstructor.clean_waveforms(**self.config['clean_waveforms'])
@@ -596,6 +626,8 @@ class ElectrodeSelector:
 
         self.close_wait_window()
 
+        return True
+
     def run_spikesorter_on_channel(self, channel_rel, label):
 
         catalogueconstructor = self.get_catalogueconstructor(channel_rel,
@@ -604,12 +636,16 @@ class ElectrodeSelector:
         # The catalogueconstructor tries to load processed data from disk,
         # stored during a previous run. If successful, skip processing here.
         if 'clusters' not in catalogueconstructor.arrays.keys():
-            self.run_spikesorter(catalogueconstructor)
+            success = self.run_spikesorter(catalogueconstructor)
+            if not success:
+                return
 
         return catalogueconstructor
 
     def open_tridesclous_gui(self, channel_rel, label):
         cc = self.run_spikesorter_on_channel(channel_rel, label)
+        if cc is None:
+            return
         gui = pg.mkQApp()
         win = tdc.CatalogueWindow(cc)
         self.plot_window.withdraw()
@@ -668,12 +704,14 @@ class ElectrodeSelector:
 
             saved_channels.append(label)
 
-            catalogueconstructor = self.run_spikesorter_on_channel(channel_idx,
-                                                                   label)
+            cc = self.run_spikesorter_on_channel(channel_idx, label)
+
+            if cc is None:
+                continue
 
             s_per_tick = 1 / self.dataio.sample_rate
 
-            spiketrains = get_spiketrains(catalogueconstructor, s_per_tick,
+            spiketrains = get_spiketrains(cc, s_per_tick,
                                           self.config['start_time'])
 
             for cell_label, spike_times in spiketrains.items():
@@ -738,7 +776,10 @@ class ElectrodeSelector:
             if not os.path.exists(path_image):
                 if electrode.get():
                     cc = self.run_spikesorter_on_channel(channel_idx, label)
-                    self.create_plots(plot_type, path_image, cc)
+                    if cc is not None:
+                        self.create_plots(plot_type, path_image, cc)
+                    else:
+                        path_image = path_image_blank
                 else:
                     path_image = path_image_blank
 

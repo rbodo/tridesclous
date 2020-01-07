@@ -40,20 +40,18 @@ class DataSourceBase:
 
 
 def get_channel_names(stream):
-    channel_names_of_file = -np.ones(len(stream.channel_infos), int)
+    channel_names = []
     ref_label = '15'
     for info in stream.channel_infos.values():
-        channel_id = info.channel_id
-        label = stream.channel_infos[channel_id].label
+        label = stream.channel_infos[info.channel_id].label
         if label == 'Ref':
             all_labels = [info.label for info in stream.channel_infos.values()]
             assert ref_label not in all_labels, \
                 "Reference electrode was assumed to be {}. But this label " \
                 "is already in use.".format(ref_label)
             label = ref_label
-        channel_names_of_file[channel_id] = int(label)
-    assert np.all(channel_names_of_file > 0)
-    return ['ch{}'.format(i) for i in channel_names_of_file]
+        channel_names.append('ch' + label)
+    return channel_names
 
 
 def get_all_channel_data(stream):
@@ -63,13 +61,15 @@ def get_all_channel_data(stream):
     # ``stream.channel_data.dtype``, which would be 'int32'.
     dtype = 'float32'
 
-    id_map = {}
     scales = []
     offsets = []
     sample_rates = []
+    channel_ids = []
+    row_ids = []
     for k in stream.channel_infos.keys():
         info = stream.channel_infos[k]
-        id_map[info.channel_id] = info.row_index
+        channel_ids.append(info.channel_id)
+        row_ids.append(info.row_index)
         scales.append(info.adc_step.magnitude)
         offsets.append(info.get_field('ADZero'))
         sample_rates.append(int(info.sampling_frequency.magnitude))
@@ -79,23 +79,27 @@ def get_all_channel_data(stream):
 
     is_parallelizable = (np.array_equiv(scales, scales[0]) and
                          np.array_equiv(offsets, offsets[0]))
-    is_permuted = not np.array_equal(list(id_map.keys()),
-                                     list(id_map.values()))
+    is_permuted = not np.array_equal(channel_ids, row_ids)
 
     if is_parallelizable:
         if is_permuted:
             channel_data_permuted = np.array(stream.channel_data)
-            channel_data = np.empty(channel_data_permuted.shape, dtype)
-            channel_data[list(id_map.keys())] = \
-                channel_data_permuted[list(id_map.values())]
+            # If the experimenter disabled recording certain electrodes,
+            # num_channels may be less than the total number of electrodes,
+            # resulting in an index error when writing to channel_data.
+            min_num_channels = max(num_channels, np.max(channel_ids) + 1)
+            channel_data = np.zeros((min_num_channels, num_timesteps), dtype)
+            channel_data[channel_ids] = channel_data_permuted[row_ids]
         else:
             channel_data = np.array(stream.channel_data, dtype)
         channel_data = np.transpose(channel_data)
         np.subtract(channel_data, offsets[0], channel_data)
         np.multiply(channel_data, scales[0], channel_data)
     else:
+        # Todo: This case does not handle the situation where num_channels is
+        #       less than the full number of electrodes in the MEA.
         import sys
-        channel_data = np.empty((num_timesteps, num_channels), dtype)
+        channel_data = np.zeros((num_timesteps, num_channels), dtype)
         for i_channel in range(num_channels):
             channel_data[:, i_channel] = stream.get_channel_in_range(
                 i_channel, 0, num_timesteps - 1)[0]
