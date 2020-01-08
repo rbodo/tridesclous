@@ -175,21 +175,25 @@ class H5DataSource(DataSourceBase):
             trigger_data = None
             trigger_times = None
             event_streams = data.recordings[0].event_streams
+            # First, try loading trigger data from digital event stream.
             if event_streams is not None:
-                if len(event_streams) > 1:
-                    print("WARNING: Multiple stimulus streams detected!")
-                for d in event_streams[0].event_entity.values():
-                    if d.info.label in {'STG 1 Single Pulse Start',
-                                        'Digital Event Detector Event'}:
-                        trigger_times = d.data[0]
-                        trigger_ticks = trigger_times // us_per_tick
-                        trigger_data = np.zeros(full_duration)
-                        trigger_data[trigger_ticks] = 1
-                        trigger_data = trigger_data[start_tick:stop_tick]
-                        trigger_times = get_interval(trigger_times, start_time,
-                                                     stop_time)
+                for event_stream in event_streams.values():
+                    for d in event_stream.event_entity.values():
+                        if d.info.label in {'STG 1 Single Pulse Start',
+                                            'Digital Event Detector Event'}:
+                            trigger_times = d.data[0]
+                            trigger_ticks = trigger_times // us_per_tick
+                            trigger_data = np.zeros(full_duration)
+                            trigger_data[trigger_ticks] = 1
+                            trigger_data = trigger_data[start_tick:stop_tick]
+                            trigger_times = get_interval(trigger_times,
+                                                         start_time, stop_time)
+                            break
+                    if trigger_times is not None:
                         break
-            else:
+
+            # If triggers not stored as digital events, try analog stream.
+            if trigger_times is None:
                 analog_stream_id = (stream_id + 1) % 2
                 trigger_data = analog_streams[analog_stream_id].channel_data[0]
                 trigger_ticks = np.flatnonzero(np.diff(trigger_data) >
@@ -199,6 +203,8 @@ class H5DataSource(DataSourceBase):
                                              stop_time)
                 trigger_data = trigger_data[start_tick:stop_tick]
 
+            # If no triggers are available (e.g. spontaneous activity), create
+            # null array.
             if trigger_times is None:
                 trigger_times = np.array([])
                 trigger_data = np.zeros(stop_tick - start_tick)

@@ -248,6 +248,11 @@ class ElectrodeSelector:
                                     c * self.interelectrode_distance)
 
     def find_channels_without_data(self):
+        # Remove all entries from list except the first, which corresponds to
+        # the reference electrode.
+        self.to_disable = self.to_disable[:1]
+
+        # Add channels that have no data.
         for channel_idx, (r, c) in self.geometry.items():
             r //= self.interelectrode_distance
             c //= self.interelectrode_distance
@@ -521,10 +526,9 @@ class ElectrodeSelector:
         # Update layout (depending on the dataset, some electrodes may have to
         # be disabled).
         self.find_channels_without_data()
-        if len(self.to_disable) > 1:  # Always have reference electrode
-            self.electrode_window.destroy()
-            self.electrode_window.update()
-            self.electrode_selection_frame()
+        self.electrode_window.destroy()
+        self.electrode_window.update()
+        self.electrode_selection_frame()
 
         self.close_wait_window()
 
