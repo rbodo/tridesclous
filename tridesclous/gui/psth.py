@@ -37,7 +37,8 @@ class PSTH(WidgetBase):
         self.layout.addWidget(self.canvas)
 
         self.trigger_times = get_trigger_times(
-            self.catalogueconstructor.cbnu.filepath)
+            self.catalogueconstructor.cbnu.filepath,
+            self.catalogueconstructor.cbnu.trigger_filename)
         self.initialize_plot()
 
         self.tree_params.setWindowTitle("PSTH settings")

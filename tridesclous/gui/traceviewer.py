@@ -51,8 +51,9 @@ class BaseTraceViewer(WidgetBase):
         WidgetBase.__init__(self, parent=parent, controller=controller)
 
         start_time = self.controller.cc.cbnu.config['start_time'] * 1e6
-        self.triggers = \
-            get_trigger_times(self.controller.cc.cbnu.filepath) - start_time
+        self.triggers = get_trigger_times(
+            self.controller.cc.cbnu.filepath,
+            self.controller.cc.cbnu.trigger_filename) - start_time
 
         self.dataio = controller.dataio
         self.signal_type = signal_type

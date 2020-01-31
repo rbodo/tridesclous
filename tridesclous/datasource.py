@@ -172,53 +172,54 @@ class H5DataSource(DataSourceBase):
             channel_names_of_file = get_channel_names(electrode_data)
             channel_names.append(channel_names_of_file)
 
-            trigger_data = None
-            trigger_times = None
+            trigger_data = []
+            trigger_times = []
             event_streams = data.recordings[0].event_streams
             # First, try loading trigger data from digital event stream.
             if event_streams is not None:
                 for event_stream in event_streams.values():
                     for d in event_stream.event_entity.values():
-                        if d.info.label in {'STG 1 Single Pulse Start',
-                                            'Digital Event Detector Event'}:
-                            trigger_times = d.data[0]
-                            trigger_ticks = trigger_times // us_per_tick
-                            trigger_data = np.zeros(full_duration)
-                            trigger_data[trigger_ticks] = 1
-                            trigger_data = trigger_data[start_tick:stop_tick]
-                            trigger_times = get_interval(trigger_times,
-                                                         start_time, stop_time)
-                            break
-                    if trigger_times is not None:
-                        break
+                        if d.info.label == 'Digital Event Detector Event' or \
+                                'Single Pulse Start' in d.info.label:
+                            tr_times = d.data[0]
+                            trigger_ticks = tr_times // us_per_tick
+                            tr_data = np.zeros(full_duration)
+                            tr_data[trigger_ticks] = 1
+                            trigger_data.append(tr_data[start_tick:stop_tick])
+                            trigger_times.append(
+                                get_interval(tr_times, start_time, stop_time))
 
             # If triggers not stored as digital events, try analog stream.
-            if trigger_times is None:
+            if len(trigger_times) == 0:
                 analog_stream_id = (stream_id + 1) % 2
-                trigger_data = analog_streams[analog_stream_id].channel_data[0]
-                trigger_ticks = np.flatnonzero(np.diff(trigger_data) >
-                                               np.abs(np.min(trigger_data)))
-                trigger_times = trigger_ticks * us_per_tick
-                trigger_times = get_interval(trigger_times, start_time,
-                                             stop_time)
-                trigger_data = trigger_data[start_tick:stop_tick]
+                tr_data = analog_streams[analog_stream_id].channel_data[0]
+                trigger_ticks = np.flatnonzero(np.diff(tr_data) >
+                                               np.abs(np.min(tr_data)))
+                tr_times = trigger_ticks * us_per_tick
+                trigger_times.append(
+                    get_interval(tr_times, start_time, stop_time))
+                trigger_data.append(tr_data[start_tick:stop_tick])
 
             # If no triggers are available (e.g. spontaneous activity), create
             # null array.
-            if trigger_times is None:
-                trigger_times = np.array([])
-                trigger_data = np.zeros(stop_tick - start_tick)
+            if len(trigger_times) == 0:
+                trigger_times.append(np.array([]))
+                trigger_data.append(np.zeros(stop_tick - start_tick))
 
             # Save stimulus as compressed numpy file for later use in GUI.
-            dirname, basename = os.path.split(filename)
-            basename, _ = os.path.splitext(basename)
-            np.savez_compressed(os.path.join(dirname, basename + '_stimulus'),
-                                times=trigger_times, data=trigger_data)
-            # Save another copy as text file for easier access in matlab.
-            np.savetxt(os.path.join(dirname, basename + '_trigger_times.txt'),
-                       trigger_times, fmt='%d')
-            np.savetxt(os.path.join(dirname, basename + '_trigger_data.txt'),
-                       trigger_data, fmt='%d')
+            for i in range(len(trigger_data)):
+                dirname, basename = os.path.split(filename)
+                basename, _ = os.path.splitext(basename)
+                np.savez_compressed(
+                    os.path.join(dirname, '{}_stimulus{}'.format(basename, i)),
+                    times=trigger_times[i], data=trigger_data[i])
+                # Save another copy as text file for easier access in matlab.
+                np.savetxt(os.path.join(
+                    dirname, '{}_trigger_times{}.txt'.format(basename, i)),
+                    trigger_times[i], fmt='%d')
+                np.savetxt(os.path.join(
+                    dirname, '{}_trigger_data{}.txt'.format(basename, i)),
+                    trigger_data[i], fmt='%d')
 
         # Make sure that every file uses the same sample rate, dtype, etc.
         assert np.array_equiv(sample_rates, sample_rates[0]), \

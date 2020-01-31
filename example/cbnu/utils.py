@@ -9,11 +9,8 @@ def get_interval(timedata, t0, t1):
     return timedata[mask]
 
 
-def get_trigger_times(filepath):
-    dirname, basename = os.path.split(filepath)
-    basename, _ = os.path.splitext(basename)
-    trigger_path = os.path.join(dirname, basename + '_stimulus.npz')
-    return np.load(trigger_path)['times']
+def get_trigger_times(filepath, name):
+    return np.load(os.path.join(os.path.dirname(filepath), name))['times']
 
 
 def get_spiketrains(catalogueconstructor, time_per_tick, start_time=0):

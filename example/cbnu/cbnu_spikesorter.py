@@ -100,6 +100,10 @@ class ElectrodeSelector:
                                                   h=(hs // 3 + y0))
         self.root.geometry(self.initial_position)
 
+    @property
+    def trigger_filename(self):
+        return self.preprocessing_dialog.params['stimulus_generator']
+
     def top_level_menu(self):
         """Top level menu."""
 
@@ -306,7 +310,8 @@ class ElectrodeSelector:
 
         dirname, basename = os.path.split(self.filepath)
         basename, _ = os.path.splitext(basename)
-        trigger_path = os.path.join(dirname, basename + '_stimulus.npz')
+        trigger_name = self.preprocessing_dialog.params['stimulus_generator']
+        trigger_path = os.path.join(dirname, trigger_name)
 
         if not os.path.exists(trigger_path):
             msg = "File not found:\n{}".format(trigger_path)
@@ -317,7 +322,7 @@ class ElectrodeSelector:
 
         window = tk.Toplevel()
         window.geometry(self.initial_position)
-        window.title("Stimulus")
+        window.title("Stimulus {}".format(trigger_name))
         window.lift()
 
         figure = Figure(figsize=(5, 5), dpi=100)
@@ -345,6 +350,8 @@ class ElectrodeSelector:
         stop = 100
 
         params = gui_params.fullchain_params
+        params.insert(0, {'name': 'stimulus_generator', 'type': 'list',
+                          'value': None, 'values': []})
         params.insert(0, {'name': 'stop_time', 'type': 'float', 'value': stop,
                           'suffix': 's', 'siPrefix': True})
         params.insert(0, {'name': 'start_time', 'type': 'float',
@@ -362,6 +369,7 @@ class ElectrodeSelector:
         p.param('stop_time').setLimits((0, 1e6))
         p.param('start_time').sigTreeStateChanged.connect(self.on_time_change)
         p.param('stop_time').sigTreeStateChanged.connect(self.on_time_change)
+        p.param('extract_waveforms').param('mode').setValue('all')
 
         params = gui_params.features_params_by_methods
         self.feature_dialog = MethodDialog(
@@ -512,9 +520,12 @@ class ElectrodeSelector:
             return
 
         basepath, extension = os.path.splitext(filepath)
-        self.output_path = os.path.join(os.path.dirname(basepath),
-                                        'tdc_output',
-                                        time.strftime("%Y%m%d-%H%M%S"))
+        dirname, basename = os.path.split(basepath)
+        # Do not change output path if it already exists (e.g. if we only load
+        # the dataset due to a change in the duration settings).
+        if self.output_path is None:
+            self.output_path = os.path.join(dirname, 'tdc_output',
+                                            time.strftime("%Y%m%d-%H%M%S"))
         if not os.path.exists(self.output_path):
             os.makedirs(self.output_path)
         self.dataio = tdc.DataIO(self.output_path)
@@ -529,6 +540,13 @@ class ElectrodeSelector:
         self.electrode_window.destroy()
         self.electrode_window.update()
         self.electrode_selection_frame()
+
+        # Find stimulus files to update settings dialog.
+        paths = os.listdir(dirname)
+        trigger_paths = [p for p in paths if basename + '_stimulus' in p]
+        if len(trigger_paths):
+            self.preprocessing_dialog.params.param(
+                'stimulus_generator').setLimits(trigger_paths)
 
         self.close_wait_window()
 
@@ -833,7 +851,7 @@ class ElectrodeSelector:
         spiketrains = get_spiketrains(catalogueconstructor, us_per_tick,
                                       int(self.config['start_time'] * 1e6))
 
-        trigger_times = get_trigger_times(self.filepath)
+        trigger_times = get_trigger_times(self.filepath, self.trigger_filename)
 
         num_clusters = len(spiketrains)
 
@@ -931,7 +949,7 @@ class ElectrodeSelector:
         spiketrains = get_spiketrains(catalogueconstructor, us_per_tick,
                                       int(self.config['start_time'] * 1e6))
 
-        trigger_times = get_trigger_times(self.filepath)
+        trigger_times = get_trigger_times(self.filepath, self.trigger_filename)
 
         # Return if there are no triggers.
         if len(trigger_times) == 0:
