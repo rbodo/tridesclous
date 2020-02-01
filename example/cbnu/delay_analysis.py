@@ -9,7 +9,6 @@ from scipy.io import loadmat
 from scipy.signal import find_peaks
 from sklearn.cluster import k_means
 
-sample_rate = 25000
 num_trials = 40
 num_delays = 11
 step_size_delays = 5
@@ -56,8 +55,8 @@ spike_times_list = [spike_times0, spike_times1]
 trigger_times_list = [trigger_times0, trigger_times1]
 
 
-def get_peaks(_spike_times, _trigger_times, path, _delay, _sample_rate,
-              _cell_name, save_plot, _threshold, _num_bins, _pre, _post):
+def get_peaks(_spike_times, _trigger_times, path, _delay, _cell_name,
+              save_plot, _threshold, _num_bins, _pre, _post):
 
     spike_times_section = get_interval(_spike_times, _trigger_times[0] - _pre,
                                        _trigger_times[-1] + _post)
@@ -74,9 +73,8 @@ def get_peaks(_spike_times, _trigger_times, path, _delay, _sample_rate,
 
         x = get_interval(spike_times_section, t_pre, t_post)
         if len(x):
-            x -= trigger_time
-        # Seconds to ms
-        x *= 1e3
+            x -= trigger_time  # Zero-center
+            x *= 1e3  # Seconds to ms
         spike_times_zerocentered.append(x)
 
     counts, bin_edges, _ = axes.hist(np.concatenate(spike_times_zerocentered),
@@ -132,9 +130,8 @@ def run_single(path, save_plots, _threshold, _num_bins):
                 delay = step_size_delays * i
                 window = slice(i * num_trials, (i + 1) * num_trials)
                 cell_peaks = get_peaks(cell_spikes, trigger_times[0][window],
-                                       _path, delay, sample_rate, _cell_name,
-                                       save_plots, _threshold, _num_bins, pre,
-                                       post)
+                                       _path, delay, _cell_name, save_plots,
+                                       _threshold, _num_bins, pre, post)
                 if len(cell_peaks) == 2:
                     _peak_diffs[i].append(np.abs(cell_peaks[1] -
                                                  cell_peaks[0]))
@@ -227,7 +224,7 @@ def plot_peaks(_peaks, path):
     axes.plot(means_norm1, colors[1], linestyle=':')
     mse = np.sum(means_norm0 ** 2) + np.sum((means_norm1 - target_delays) ** 2)
     axes.set_title('{:.2f}'.format(mse))
-    axes.hlines(0, 0, 10, colors[0])
+    axes.hlines(0, 0, num_delays - 1, colors[0])
     canvas.print_figure(os.path.join(path, 'peaks'), bbox_inches='tight',
                         dpi=100)
 
