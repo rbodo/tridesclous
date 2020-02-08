@@ -2,12 +2,14 @@
 
 import os
 import numpy as np
-from matplotlib.figure import Figure
-from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+import matplotlib.pyplot as plt
 from example.cbnu.utils import get_interval
 from scipy.io import loadmat
 from scipy.signal import find_peaks
 from sklearn.cluster import k_means
+import pandas as pd
+import seaborn as sns
+sns.set()
 
 num_trials = 40
 num_delays = 11
@@ -63,10 +65,6 @@ def get_peaks(_spike_times, _trigger_times, path, _delay, _cell_name,
 
     spike_times_zerocentered = []
 
-    figure = Figure()
-    canvas = FigureCanvas(figure)
-    axes = figure.subplots(1, 1)
-    axes.set_xlabel("Time [ms]")
     for trigger_time in _trigger_times:
         t_pre = trigger_time - _pre
         t_post = trigger_time + _post
@@ -77,42 +75,45 @@ def get_peaks(_spike_times, _trigger_times, path, _delay, _cell_name,
             x *= 1e3  # Seconds to ms
         spike_times_zerocentered.append(x)
 
-    counts, bin_edges, _ = axes.hist(np.concatenate(spike_times_zerocentered),
-                                     _num_bins, histtype='stepfilled',
-                                     facecolor='k', align='left')
+    sns_fig = sns.distplot(np.concatenate(spike_times_zerocentered),
+                           _num_bins, hist=True, rug=True, kde=True,
+                           hist_kws={'align': 'left'})
+    bin_edges, counts = sns_fig.get_lines()[0].get_data()
 
-    # median = np.median(counts)
-    # mad = np.median(np.abs(counts - median))
-    # min_height = median + 5 * mad
-    mean = np.mean(counts)
-    std = np.std(counts)
-    min_height = mean + _threshold * std
+    sns_fig.set_xlabel("Time [ms]")
+
+    median = np.median(counts)
+    mad = np.median(np.abs(counts - median))
+    min_height = median + _threshold * mad
+    # mean = np.mean(counts)
+    # std = np.std(counts)
+    # min_height = mean + _threshold * std
     peak_idxs, _ = find_peaks(counts, min_height)
     peak_heights = counts[peak_idxs]
     sort_idxs = np.argsort(peak_heights)
     max_peak_idxs = peak_idxs[sort_idxs][-2:]
 
-    ymax = axes.get_ylim()[1]
+    ymax = 0.1  # axes.get_ylim()[1]
     peak_times = []
     if len(max_peak_idxs) > 0:
         peak_time = bin_edges[max_peak_idxs[0]]
-        axes.vlines(peak_time, 0, ymax, color='g')
+        sns_fig.vlines(peak_time, 0, ymax, color='g')
         peak_times.append(peak_time)
     if len(max_peak_idxs) > 1:
         peak_time = bin_edges[max_peak_idxs[1]]
-        axes.vlines(peak_time, 0, ymax, color='b')
+        sns_fig.vlines(peak_time, 0, ymax, color='b')
         peak_times.append(peak_time)
 
     if save_plot:
         pre_ms = 1e3 * _pre
         post_ms = 1e3 * _post
-        axes.set_xlim(-pre_ms, post_ms)
-        axes.vlines(0, 0, ymax, color='r')
-        axes.hlines(min_height, -pre_ms, post_ms, color='y')
-        figure.subplots_adjust(wspace=0, hspace=0)
         filepath = os.path.join(path,
                                 'PSTH_{}_{}.png'.format(_cell_name, _delay))
-        canvas.print_figure(filepath, bbox_inches='tight', dpi=100)
+        sns_fig.set_xlim(-pre_ms, post_ms)
+        sns_fig.vlines(0, 0, ymax, color='r')
+        sns_fig.hlines(min_height, -pre_ms, post_ms, color='y')
+        sns_fig.get_figure().savefig(os.path.join(filepath))
+        plt.clf()
 
     return peak_times
 
@@ -148,27 +149,26 @@ def run_single(path, save_plots, _threshold, _num_bins):
 
 
 def plot_peak_diffs(_peak_diffs, path):
-    figure = Figure()
-    canvas = FigureCanvas(figure)
-    axes = figure.subplots(1, 1)
-    axes.boxplot(_peak_diffs, notch=True, patch_artist=True)
-    axes.set_xticklabels(step_size_delays * np.arange(num_delays))
-    axes.set_xlabel("Stimulus delay [ms]")
-    axes.set_ylabel("Response delay [ms]")
-    axes.plot([1, num_delays], [0, step_size_delays * (num_delays - 1)])
-    mse = np.sum(
-        np.subtract([np.mean(d) for d in _peak_diffs], target_delays) ** 2)
-    axes.set_title('{:.2f}'.format(mse))
-    canvas.print_figure(os.path.join(path, 'delay_diffs'), bbox_inches='tight',
-                        dpi=100)
+    sns_fig = sns.violinplot(data=_peak_diffs, inner='points', scale='count',
+                             color='b')
+    sns_fig.plot([0, num_delays - 1], [0, step_size_delays * (num_delays - 1)])
+    sns_fig.set_xticklabels(step_size_delays * np.arange(num_delays))
+    sns_fig.set_xlabel("Stimulus delay [ms]")
+    sns_fig.set_ylabel("Response delay [ms]")
+    medians = [np.median(d) for d in _peak_diffs]
+    mse = np.sum(np.subtract(medians, target_delays) ** 2)
+    sns_fig.set_title('{:.2f}'.format(mse))
+    sns_fig.plot(medians, '--', color='b')
+    sns_fig.get_figure().savefig(os.path.join(path, 'delay_diffs'))
+    plt.clf()
 
 
 def plot_peaks(_peaks, path):
-    figure = Figure()
-    canvas = FigureCanvas(figure)
-    axes = figure.subplots(1, 1)
-    colors = ['b', 'g']
+    colors = ['b', 'orange']
     cluster_means = [[], []]
+    clusters = []
+    delays = []
+    cluster_ids = []
     for i, delay_peaks in enumerate(_peaks):
         if len(delay_peaks) == 0:
             cluster_means[0].append(0)
@@ -179,17 +179,15 @@ def plot_peaks(_peaks, path):
         weights = np.ones_like(delay_peaks)
         weights[delay_peaks > target_delay + 30] = 0.1
         weights[delay_peaks < 0] = 0
-        c = colors[0]
         if i == 0:
             mean, _, _ = k_means(np.expand_dims(delay_peaks, -1), 1, weights,
                                  np.array([[0]]), n_init=1, n_jobs=-1)
             mean = mean[0, 0]  # Remove empty axes.
-            axes.boxplot(delay_peaks, notch=True, patch_artist=True,
-                         positions=[i], boxprops=dict(facecolor=c, color=c),
-                         capprops=dict(color=c), whiskerprops=dict(color=c),
-                         flierprops=dict(color=c, markeredgecolor=c))
             cluster_means[0].append(mean)
             cluster_means[1].append(mean)
+            clusters += list(delay_peaks)
+            delays += [i] * len(delay_peaks)
+            cluster_ids += [0] * len(delay_peaks)
         else:
             means, labels, _ = k_means(np.expand_dims(delay_peaks, -1), 2,
                                        weights,
@@ -202,31 +200,35 @@ def plot_peaks(_peaks, path):
             for cluster_id in [0, 1]:
                 cluster = delay_peaks[labels == cluster_id]
                 mean = means[cluster_id, 0]  # Second axis is empty.
-                c = colors[cluster_id]
-                axes.boxplot(cluster, notch=True, patch_artist=True,
-                             positions=[i], capprops=dict(color=c),
-                             boxprops=dict(facecolor=c, color=c),
-                             whiskerprops=dict(color=c),
-                             flierprops=dict(color=c, markeredgecolor=c))
-                axes.plot(i, mean)
                 cluster_means[cluster_id].append(mean)
-    axes.set_xticks(np.arange(num_delays))
-    axes.set_xticklabels(step_size_delays * np.arange(num_delays))
-    axes.set_xlabel("Stimulus delay [ms]")
-    axes.set_ylabel("Response times [ms]")
-    axes.plot(target_delays, colors[1])
-    axes.plot(cluster_means[0], colors[0], linestyle='--')
-    axes.plot(cluster_means[1], colors[1], linestyle='--')
+                clusters += list(cluster)
+                delays += [i] * len(cluster)
+                cluster_ids += [cluster_id] * len(cluster)
+
+    clusters_ = pd.DataFrame(
+        {'clusters': clusters, 'delays': delays, 'cluster_ids': cluster_ids})
+
+    sns_fig = sns.violinplot(x='delays', y='clusters', hue='cluster_ids',
+                             data=clusters_, inner='point', split=True,
+                             scale='count', scale_hue=True)
+    sns_fig.set_xticks(np.arange(num_delays))
+    sns_fig.set_xticklabels(step_size_delays * np.arange(num_delays))
+    sns_fig.set_xlabel("Stimulus delay [ms]")
+    sns_fig.set_ylabel("Response times [ms]")
+    sns_fig.plot(target_delays, colors[1])
+    sns_fig.plot(cluster_means[0], colors[0], linestyle='--')
+    sns_fig.plot(cluster_means[1], colors[1], linestyle='--')
     offset = np.mean(cluster_means[0])
     means_norm0 = np.array(cluster_means[0]) - offset
     means_norm1 = np.array(cluster_means[1]) - offset
-    axes.plot(means_norm0, colors[0], linestyle=':')
-    axes.plot(means_norm1, colors[1], linestyle=':')
+    sns_fig.plot(means_norm0, colors[0], linestyle=':')
+    sns_fig.plot(means_norm1, colors[1], linestyle=':')
     mse = np.sum(means_norm0 ** 2) + np.sum((means_norm1 - target_delays) ** 2)
-    axes.set_title('{:.2f}'.format(mse))
-    axes.hlines(0, 0, num_delays - 1, colors[0])
-    canvas.print_figure(os.path.join(path, 'peaks'), bbox_inches='tight',
-                        dpi=100)
+    sns_fig.set_title('{:.2f}'.format(mse))
+    sns_fig.hlines(0, 0, num_delays - 1, colors[0])
+    sns_fig.legend_.remove()
+    sns_fig.get_figure().savefig(os.path.join(path, 'peaks'))
+    plt.clf()
 
 
 for num_bins in bin_sweep:
@@ -236,7 +238,7 @@ for num_bins in bin_sweep:
         print(path_sweep)
         if not os.path.exists(path_sweep):
             os.makedirs(path_sweep)
-        peaks, peak_diffs = run_single(path_sweep, False, threshold, num_bins)
+        peaks, peak_diffs = run_single(path_sweep, True, threshold, num_bins)
 
         plot_peak_diffs(peak_diffs, path_sweep)
         plot_peaks(peaks, path_sweep)

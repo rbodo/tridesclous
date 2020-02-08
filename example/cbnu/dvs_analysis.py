@@ -7,6 +7,9 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 from example.cbnu.utils import get_interval
 from scipy.io import loadmat
 from scipy.signal import find_peaks
+import pandas as pd
+import seaborn as sns
+sns.set()
 
 data_path = 'C:\\Users\\bodor\\Documents\\Korea\\experiment\\' \
             'dvs\\30uA_1ms_1Hz_cathodic'
@@ -115,6 +118,25 @@ def plot_peaks(_peaks, path):
                         dpi=100)
 
 
+def plot_residuals(_peaks, path):
+    figure = Figure()
+    canvas = FigureCanvas(figure)
+    axes = figure.subplots(1, 1)
+    data = np.subtract(_peaks, relative_trigger_times) * 1e3
+    axes.plot(data, '.')
+    pearson = np.corrcoef(_peaks, relative_trigger_times)[0, 1]
+    axes.set_title("Pearson correlation: {:.4f}".format(pearson))
+    xlabel = "Stimulus index"
+    axes.set_xlabel(xlabel)
+    ylabel = "Response delay [ms]"
+    axes.set_ylabel(ylabel)
+    canvas.print_figure(os.path.join(path, 'residuals'), bbox_inches='tight',
+                        dpi=100)
+    data = pd.DataFrame({xlabel: np.arange(len(data)), ylabel: data})
+    sns_fig = sns.regplot(xlabel, ylabel, data=data)
+    sns_fig.get_figure().savefig(os.path.join(path, 'residuals'))
+
+
 for num_bins in bin_sweep:
     for threshold in threshold_sweep:
         path_sweep = os.path.join(output_path, 'bins{}_threshold{}'.format(
@@ -125,3 +147,4 @@ for num_bins in bin_sweep:
         peaks = run_single(path_sweep, False, threshold, num_bins)
 
         plot_peaks(peaks, path_sweep)
+        plot_residuals(peaks, path_sweep)
