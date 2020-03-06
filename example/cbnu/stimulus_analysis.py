@@ -26,20 +26,26 @@ def init_peak_times():
     return _peak_times
 
 
-num_trials = 10
 widths = [0.5, 1, 2, 4]
 heights = [10, 30, 50]
 data_path = 'C:\\Users\\bodor\\Documents\\Korea\\experiment\\' \
             'alternating_pulses_in_corners\\5uA_1ms_1Hz_cathodic'
-trigger_path0 = os.path.join(data_path, 'Stim_Location_Green(ch61)_Blue(ch57)')
-cell_path0 = os.path.join(trigger_path0, 'spiketimes')
-trigger_path1 = os.path.join(data_path, 'Stim_Location_Green(ch61)_Blue(ch77)')
-cell_path1 = os.path.join(trigger_path1, 'spiketimes')
 pre = 0.01
 post = 0.09
 
-threshold_sweep = [1]
-bin_sweep = [20]  # 5 ms
+threshold_sweep = [1, 1.5, 2]
+bin_sweep = [10, 20, 25, 33]  # 10 ms, 5 ms, 4 ms, 3 ms
+
+# If true, fit a kernel-density estimate on PSTH and get the peak time from its
+# maximum. Otherwise, peak time is the first time where a bin count exceeds
+# threshold.
+use_kde = False
+
+# Select neighbors of stimulus electrode 55.
+# cells_to_plot = []
+cells_to_plot = ['ch_45a', 'ch_46a', 'ch_54a', 'ch_54b', 'ch_56a', 'ch_64a',
+                 'ch_64b', 'ch_64c', 'ch_64d', 'ch_65a', 'ch_65b', 'ch_65c',
+                 'ch_66a', 'ch_66b']
 
 output_path = os.path.join(data_path, 'plots')
 if not os.path.exists(output_path):
@@ -68,6 +74,8 @@ spike_times = OrderedDict()
 for cell_name, cell_data in spike_sheet.items():
     if 'ch_' not in cell_name:
         continue
+    if len(cells_to_plot) and cell_name not in cells_to_plot:
+        continue
     spike_times[cell_name] = remove_nan(cell_data.to_numpy())
 
 
@@ -95,32 +103,45 @@ def get_peak(_spike_times, _trigger_times, path, _cell_name, height, width,
         return
 
     sns_fig = sns.distplot(spike_times_zerocentered, _num_bins, hist=True,
-                           rug=True, kde=True, hist_kws={'align': 'left'})
-    bin_edges, counts = sns_fig.get_lines()[0].get_data()
+                           rug=True, kde=use_kde, hist_kws={'align': 'left'})
+    if use_kde:
+        bin_edges, counts = sns_fig.get_lines()[0].get_data()
+    else:
+        bin_edges = np.array([patch.xy[0] for patch in sns_fig.patches])
+        counts = np.array([patch.get_height() for patch in sns_fig.patches])
 
     sns_fig.set_xlabel("Time [ms]")
 
     median = np.median(counts)
     mad = np.median(np.abs(counts - median))
     min_height = median + _threshold * mad
-    # mean = np.mean(counts)
-    # std = np.std(counts)
-    # min_height = mean + _threshold * std
-    peak_idxs, _ = find_peaks(counts, min_height)
-
-    if len(peak_idxs) == 0:
-        return
-
-    peak_heights = counts[peak_idxs]
-    max_peak_idx = peak_idxs[np.argmax(peak_heights)]
-    peak_time = bin_edges[max_peak_idx]
+    # The mad can be zero if there are few spikes. In that case, use mean:
+    if min_height == 0:
+        mean = np.mean(counts)
+        std = np.std(counts)
+        min_height = mean + _threshold * std
+    if use_kde:
+        peak_idxs, _ = find_peaks(counts, min_height)
+        if len(peak_idxs) == 0:
+            return
+        peak_heights = counts[peak_idxs]
+        max_peak_idx = peak_idxs[np.argmax(peak_heights)]
+        peak_time = bin_edges[max_peak_idx]
+    else:
+        # Set pre-stimulus counts to zero so they are not considered when
+        # finding peak.
+        counts[bin_edges <= 0] = 0
+        peak_idxs = np.flatnonzero(counts >= min_height)
+        if len(peak_idxs) == 0:
+            return
+        peak_time = bin_edges[peak_idxs[0]]
 
     if save_plot:
         filepath = os.path.join(path, 'PSTH_{}_{}_{}_{}.png'.format(
             _cell_name, height, width, polarity))
         pre_ms = 1e3 * _pre
         post_ms = 1e3 * _post
-        ymax = 0.1  # axes.get_ylim()[1]
+        ymax = 0.1 if use_kde else sns_fig.get_ylim()[1]
         sns_fig.set_xlim(-pre_ms, post_ms)
         sns_fig.vlines(peak_time, 0, ymax, color='g')
         sns_fig.vlines(0, 0, ymax, color='r')
@@ -149,33 +170,47 @@ def run_single(path, save_plots, _threshold, _num_bins):
 
 
 def plot_peaks(peaks, path):
+    data = {'peak_times': [], 'heights': [], 'widths': [], 'polarity': []}
+    medians = {'peak_times': [], 'heights': [], 'widths': [], 'polarity': []}
     for _key0, _section0 in peaks.items():  # Height
-        _peak_times = []
-        _widths = []
-        _polarity = []
         for _key1, _section1 in _section0.items():  # Width
             for _key2, _section2 in _section1.items():  # Polarity
-                _peak_times += _section2
-                _widths += [_key1] * len(_section2)
-                _polarity += [_key2] * len(_section2)
+                data['peak_times'].extend(_section2)
+                data['heights'].extend([_key0] * len(_section2))
+                data['widths'].extend([_key1] * len(_section2))
+                data['polarity'].extend([_key2] * len(_section2))
+                medians['peak_times'].append(np.median(_section2))
+                medians['heights'].append(_key0)
+                medians['widths'].append(_key1)
+                medians['polarity'].append(_key2)
 
-        if len(np.unique(_polarity)) < 2:
-            continue
+    data = pd.DataFrame(data)
+    medians = pd.DataFrame(medians)
 
-        data = pd.DataFrame({'peak_times': _peak_times, 'widths': _widths,
-                             'polarity': _polarity})
-
+    for _key0 in peaks.keys():  # Height
+        data_heights = data.query('heights == {}'.format(_key0))
         sns_fig = sns.violinplot(x='widths', y='peak_times', hue='polarity',
-                                 data=data, inner='point', split=True,
+                                 data=data_heights, inner='point', split=True,
                                  scale='count', scale_hue=True)
         sns_fig.set_xticks(np.arange(len(widths)))
         sns_fig.set_xticklabels(widths)
         sns_fig.set_xlabel("Stimulus width [ms]")
         sns_fig.set_ylabel("Response times [ms]")
+        sns_fig.set_ylim(- pre * 1e3, post * 1e3)
         sns_fig.legend_.remove()
         sns_fig.get_figure().savefig(os.path.join(path,
                                                   'peaks_{}'.format(_key0)))
         plt.clf()
+
+    sns_fig = sns.lineplot(x='widths', y='peak_times', hue='heights',
+                           style='polarity', data=medians, legend='full')
+    sns_fig.set_ylim(0, 50)
+    sns_fig.set_xticks(widths)
+    sns_fig.set_xticklabels(widths)
+    sns_fig.set_xlabel('Pulse width [ms]')
+    sns_fig.set_xlabel('Peak response time [ms]')
+    sns_fig.get_figure().savefig(os.path.join(path, 'medians'))
+    plt.clf()
 
     # # Enable this when looking at a single cell:
     # _peak_times_cathodic = {}
