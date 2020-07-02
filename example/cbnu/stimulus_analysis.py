@@ -10,8 +10,8 @@ from collections import OrderedDict
 import seaborn as sns
 sns.set()
 
-PRE = 0.01
-POST = 0.09
+PRE = 0.1
+POST = 0.1
 
 
 def remove_nan(array):
@@ -26,6 +26,25 @@ def decode_header(header):
     width = width.replace('ms', '')
 
     return float(height), float(width)
+
+
+def get_spiketimes_zerocentered(_spike_times, _trigger_times):
+    spike_times_section = get_interval(_spike_times, _trigger_times[0] - PRE,
+                                       _trigger_times[-1] + POST)
+
+    spike_times_zerocentered = []
+
+    for trigger_time in _trigger_times:
+        t_pre = trigger_time - PRE
+        t_post = trigger_time + POST
+
+        x = get_interval(spike_times_section, t_pre, t_post)
+        if len(x):
+            x -= trigger_time  # Zero-center
+            x *= 1e3  # Seconds to ms
+        spike_times_zerocentered.append(x)
+
+    return np.concatenate(spike_times_zerocentered)
 
 
 def get_data(path, _use_nn):
@@ -91,13 +110,19 @@ def run(_data, _bin_sweep, _threshold_sweep):
 
 def run_single(path, save_plots, _threshold, _num_bins, _data):
     peaks = {'peak_times': [], 'heights': [], 'widths': [], 'polarity': []}
-
-    for _trigger_times, _spike_times in _data:
+    all_spikes = {}
+    for i, (_trigger_times, _spike_times) in enumerate(_data):
         for _key0, section0 in _trigger_times.items():
             for _key1, section1 in section0.items():
                 for _key2, section2 in section1.items():
                     for _cell_name, cell_spikes in _spike_times.items():
-                        peak = get_peak(cell_spikes, section2, path,
+                        spike_times_zerocentered = get_spiketimes_zerocentered(
+                            cell_spikes, section2)
+                        keys = (_key0, _key1, _key2)
+                        if keys not in all_spikes:
+                            all_spikes[keys] = []
+                        all_spikes[keys].extend(list(spike_times_zerocentered))
+                        peak = get_peak(spike_times_zerocentered, path, i,
                                         _cell_name, _key0, _key1, _key2,
                                         save_plots, _threshold, _num_bins)
                         if peak is not None:
@@ -106,15 +131,39 @@ def run_single(path, save_plots, _threshold, _num_bins, _data):
                             peaks['widths'].append(_key1)
                             peaks['polarity'].append(_key2)
 
+    peaks2 = {'peak_times': [], 'heights': [], 'widths': [], 'polarity': []}
+    for (_key0, _key1, _key2), spikes in all_spikes.items():
+        peak = get_peak(spikes, path, '', 'all', _key0, _key1, _key2,
+                        save_plots, _threshold, _num_bins, False)
+        peaks2['peak_times'].append(peak)
+        peaks2['heights'].append(_key0)
+        peaks2['widths'].append(_key1)
+        peaks2['polarity'].append(_key2)
+    peaks2 = pd.DataFrame(peaks2)
+
+    plt.clf()
+    sns_fig = sns.lineplot(x='widths', y='peak_times', hue='heights',
+                           style='polarity', data=peaks2, legend='full')
+    sns_fig.set(xscale='log')
+    sns_fig.set_ylim(0, 50)
+    widths = np.unique(peaks2['widths'].values)
+    sns_fig.set_xticks(widths)
+    sns_fig.set_xticklabels(widths)
+    sns_fig.set_xlabel('Pulse width [ms] (log scale)')
+    sns_fig.set_ylabel('Peak response time [ms]')
+    sns_fig.get_figure().savefig(os.path.join(path, 'from_combined_PSTH'))
+    plt.clf()
+
     return pd.DataFrame(peaks)
 
 
-def get_peak(_spike_times, _trigger_times, path, _cell_name, height, width,
-             polarity, save_plot, _threshold, _num_bins, use_kde=False):
+def get_peak(_spike_times, path, experiment_idx, _cell_name,
+             height, width, polarity, save_plot, _threshold, _num_bins,
+             use_kde=False):
     """
     :param _spike_times:
-    :param _trigger_times:
     :param path:
+    :param experiment_idx:
     :param _cell_name:
     :param height:
     :param width:
@@ -128,28 +177,12 @@ def get_peak(_spike_times, _trigger_times, path, _cell_name, height, width,
     :return:
     """
 
-    spike_times_section = get_interval(_spike_times, _trigger_times[0] - PRE,
-                                       _trigger_times[-1] + POST)
-
-    spike_times_zerocentered = []
-
-    for trigger_time in _trigger_times:
-        t_pre = trigger_time - PRE
-        t_post = trigger_time + POST
-
-        x = get_interval(spike_times_section, t_pre, t_post)
-        if len(x):
-            x -= trigger_time  # Zero-center
-            x *= 1e3  # Seconds to ms
-        spike_times_zerocentered.append(x)
-
-    spike_times_zerocentered = np.concatenate(spike_times_zerocentered)
-
-    if len(spike_times_zerocentered) < 10:
+    if len(_spike_times) < 10:
         return
 
-    sns_fig = sns.distplot(spike_times_zerocentered, _num_bins, hist=True,
-                           rug=True, kde=use_kde, hist_kws={'align': 'left'})
+    plt.clf()
+    sns_fig = sns.distplot(_spike_times, _num_bins, hist=True, rug=True,
+                           kde=use_kde)
     if use_kde:
         bin_edges, counts = sns_fig.get_lines()[0].get_data()
     else:
@@ -158,14 +191,18 @@ def get_peak(_spike_times, _trigger_times, path, _cell_name, height, width,
 
     sns_fig.set_xlabel("Time [ms]")
 
-    median = np.median(counts)
-    mad = np.median(np.abs(counts - median))
-    min_height = median + _threshold * mad
-    # The mad can be zero if there are few spikes. In that case, use mean:
-    if min_height == 0:
-        mean = np.mean(counts)
-        std = np.std(counts)
-        min_height = mean + _threshold * std
+    counts_nonzero = counts[np.flatnonzero(counts)]
+    if counts_nonzero.size == 0:
+        return
+    else:
+        median = np.median(counts_nonzero)
+        mad = np.median(np.abs(counts_nonzero - median))
+        min_height = median + _threshold * mad
+
+    # Set pre-stimulus counts to zero so they are not considered when finding
+    # peak.
+    counts[bin_edges <= 0] = 0
+
     if use_kde:
         peak_idxs, _ = find_peaks(counts, min_height)
         if len(peak_idxs) == 0:
@@ -174,26 +211,23 @@ def get_peak(_spike_times, _trigger_times, path, _cell_name, height, width,
         max_peak_idx = peak_idxs[np.argmax(peak_heights)]
         peak_time = bin_edges[max_peak_idx]
     else:
-        # Set pre-stimulus counts to zero so they are not considered when
-        # finding peak.
-        counts[bin_edges <= 0] = 0
+        min_height = max(min_height, 5)  # Want at least 5 spikes in a bin.
         peak_idxs = np.flatnonzero(counts >= min_height)
         if len(peak_idxs) == 0:
             return
         peak_time = bin_edges[peak_idxs[0]]
 
     if save_plot:
-        filepath = os.path.join(path, 'PSTH_{}_{}_{}_{}.png'.format(
-            _cell_name, height, width, polarity))
+        filepath = os.path.join(path, 'PSTH_({})_{}_{}_{}_{}.png'.format(
+            experiment_idx, _cell_name, height, width, polarity))
         pre_ms = 1e3 * PRE
         post_ms = 1e3 * POST
-        ymax = 0.1 if use_kde else sns_fig.get_ylim()[1]
+        ymax = sns_fig.get_ylim()[1]
         sns_fig.set_xlim(-pre_ms, post_ms)
         sns_fig.vlines(peak_time, 0, ymax, color='g')
         sns_fig.vlines(0, 0, ymax, color='r')
         sns_fig.hlines(min_height, -pre_ms, post_ms, color='y')
         sns_fig.get_figure().savefig(filepath)
-        plt.clf()
 
     return peak_time
 
@@ -273,12 +307,12 @@ def plot_peaks(peaks, path):
 
 if __name__ == '__main__':
 
-    threshold_sweep = [1, 1.5]
-    bin_sweep = [20, 25, 50, 100]  # 5 ms, 4 ms, 2 ms, 1 ms
+    threshold_sweep = [1, 2, 3]
+    bin_sweep = [20, 50, 100]  # 5 ms, 4 ms, 2 ms, 1 ms
 
     # If true, use only spikes from cells recorded at nearest neighbors of the
     # stimulation electrode.
-    use_nn = False
+    use_nn = True
 
     base_path = \
         'C:\\Users\\bodor\\Documents\\Korea\\experiment\\stimulus_sweep\\wt'
